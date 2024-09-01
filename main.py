@@ -125,7 +125,7 @@ def write_html(filename):
     with open(filename, 'w') as htmlfile:
         htmlfile.write(f"""<html>
 <head>
-<title>ESP32-S3 Server</title>
+<title>ESP32-S3 Server Shit</title>
 <style>
 body {{
     font-family: 'Arial', sans-serif;
