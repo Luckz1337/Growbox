@@ -4,6 +4,7 @@ import CCS811
 import bme280
 import bh1750
 
+
 class I2CMultiplexer:
     def __init__(self, i2c, address=0x70):
         self.i2c = i2c
