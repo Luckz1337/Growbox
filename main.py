@@ -120,53 +120,7 @@ if wlan.status() != network.STAT_GOT_IP:
 else:
     print('Verbunden mit IP:', wlan.ifconfig()[0])
 
-# Funktion zum Schreiben in eine HTML-Datei
-def write_html(filename):
-    with open(filename, 'w') as htmlfile:
-        htmlfile.write(f"""<html>
-<head>
-<title>ESP32-S3 Server Shit</title>
-<style>
-body {{
-    font-family: 'Arial', sans-serif;
-    background-color: #333;
-    color: #eee;
-    margin: 0;
-    padding: 20px;
-}}
-h1 {{
-    color: #ff9800;
-}}
-table {{
-    width: 100%;
-    border-collapse: collapse;
-}}
-th, td {{
-    text-align: left;
-    padding: 8px;
-    border-bottom: 1px solid #ddd;
-}}
-th {{
-    background-color: #555;
-    color: #fff;
-}}
-tr:hover {{background-color: #444;}}
-</style>
-</head>
-<body>
-<h1>ESP32-S3 Webserver Hurensohn</h1>
-<p>Aktuelle Uhrzeit: {format_datetime_custom(utime.localtime())}</p>
-<h2>BME280 Sensor</h2>
-<p>Temperatur: {latest_bme280_temp:.2f} °C</p>
-<p>Luftdruck: {latest_bme280_pressure:.2f} hPa</p>
-<p>Luftfeuchtigkeit: {latest_bme280_humidity:.2f} %</p>
-<h2>CCS811 Sensor</h2>
-<p>CO2: {latest_ccs811_co2} ppm</p>
-<p>TVOC: {latest_ccs811_tvoc} ppb</p>
-<h2>BH1750 Sensor</h2>
-<p>Lichtstärke: {latest_bh1750_lux:.2f} Lux</p>
-</body>
-</html>""")
+
 
 # Funktion zum Starten des Servers
 def start_server():
@@ -197,11 +151,16 @@ def handle_requests(s):
 
 # Funktion zum Senden der HTML-Seite
 def send_html_page(client):
-    write_html('index.html')
-    with open('index.html', 'rb') as f:
-        response = b"HTTP/1.1 200 OK\r\nContent-Type: text/html\r\n\r\n" + f.read()
+    try:
+        with open('index.html', 'rb') as f:
+            response = b"HTTP/1.1 200 OK\r\nContent-Type: text/html\r\n\r\n" + f.read()
+            client.send(response)
+    except Exception as e:
+        print(f"Error sending index.html: {e}")
+        response = b"HTTP/1.1 500 Internal Server Error\r\nContent-Type: text/html\r\n\r\n<h1>500 Internal Server Error</h1>"
         client.send(response)
     client.close()
+
 
 # Funktion zum Senden der Sensordaten als JSON
 def send_sensor_data(client):
