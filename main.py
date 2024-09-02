@@ -154,7 +154,7 @@ tr:hover {{background-color: #444;}}
 </style>
 </head>
 <body>
-<h1>ESP32-S3 Webserver</h1>
+<h1>ESP32-S3 Webserver Hurensohn</h1>
 <p>Aktuelle Uhrzeit: {format_datetime_custom(utime.localtime())}</p>
 <h2>BME280 Sensor</h2>
 <p>Temperatur: {latest_bme280_temp:.2f} °C</p>
