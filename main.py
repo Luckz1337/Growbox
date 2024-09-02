@@ -2,18 +2,61 @@ from machine import Pin, I2C
 import bme280
 import network
 import socket
+import time
 import CCS811  # Importiere die CCS811-Bibliothek
 import bh1750  # BH1750-Bibliothek importieren
 from time import sleep
 import utime
 import _thread
 import json
-import time
+import ntptime
+import utime
 
-# Funktion zur Formatierung der aktuellen Uhrzeit
+# Funktion zur Synchronisierung der Zeit und Anpassung an die lokale Zeitzone
+def sync_time_with_dst():
+    try:
+        # Synchronisieren mit einem NTP-Server
+        ntptime.settime()
+        
+        # Aktuelle Zeit in UTC abrufen
+        tm = utime.localtime()
+        
+        # Überprüfen, ob Sommerzeit aktiv ist
+        if is_dst_europe(tm):
+            timezone_offset_hours = 2  # UTC+2 für MESZ
+        else:
+            timezone_offset_hours = 1  # UTC+1 für MEZ
+        
+        # Zeit anpassen an die lokale Zeitzone
+        local_time = utime.localtime(utime.time() + timezone_offset_hours * 3600)
+        
+        # Formatierte Zeit ausgeben
+        print("Aktuelle lokale Uhrzeit:", format_datetime_custom(local_time))
+        
+    except Exception as e:
+        print("Fehler bei der Zeit-Synchronisation:", e)
+
+# Funktion zur Bestimmung, ob Sommerzeit in Europa gilt
+def is_dst_europe(dt):
+    year, month, day, hour, minute, second, weekday, yearday = dt
+    # Sommerzeit gilt zwischen dem letzten Sonntag im März und dem letzten Sonntag im Oktober
+    if month > 3 and month < 10:  # Zwischen April und September ist immer Sommerzeit
+        return True
+    if month == 3:  # März, prüfe auf den letzten Sonntag
+        return (day + (6 - weekday)) > 31
+    if month == 10:  # Oktober, prüfe auf den letzten Sonntag
+        return not (day + (6 - weekday)) > 31
+    return False
+
+# Funktion zur Formatierung des Datums und der Uhrzeit
 def format_datetime_custom(dt):
     year, month, day, hour, minute, second, _, _ = dt
     return "{:04d}/{:02d}/{:02d}-{:02d}:{:02d}:{:02d}".format(year, month, day, hour, minute, second)
+
+# Zeit synchronisieren und ausgeben
+sync_time_with_dst()
+
+
 
 # Klasse für den I2C-Multiplexer
 class I2CMultiplexer:
@@ -198,4 +241,3 @@ server = start_server()
 _thread.start_new_thread(sensor_loop, ())
 
 handle_requests(server)
-
