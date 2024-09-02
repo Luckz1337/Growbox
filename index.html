@@ -41,6 +41,17 @@
             height: 400px; /* Höhe des Graphen-Containers */
             margin-bottom: 20px;
         }
+        .reset-button {
+            background-color: #ff9800;
+            color: #fff;
+            border: none;
+            padding: 10px 20px;
+            text-align: center;
+            font-size: 1.2em;
+            border-radius: 10px;
+            cursor: pointer;
+            margin-top: 20px;
+        }
     </style>
 </head>
 <body>
@@ -77,6 +88,9 @@
     <div class="data-box">
         <h3>BH1750 Lichtstärke</h3>
         <p id="latest-bh1750-lux">-- Lux</p>
+    </div>
+    <div class="data-box">
+        <button id="reset-button" class="reset-button">Microcontroller neu starten</button>
     </div>
 </div>
 
@@ -216,7 +230,23 @@ async function loadAndPlotData() {
 
 // Rufe die Funktion zum Laden und Zeichnen der Daten auf
 loadAndPlotData();
+
+// Funktion für den Reset-Button
+document.getElementById('reset-button').addEventListener('click', async function() {
+    try {
+        const response = await fetch('/reset');
+        if (response.ok) {
+            alert("Gerät wird neu gestartet...");
+        } else {
+            alert("Fehler beim Neustart.");
+        }
+    } catch (error) {
+        console.error('Fehler beim Neustart:', error);
+        alert("Fehler beim Neustart.");
+    }
+});
 </script>
 
 </body>
 </html>
+
