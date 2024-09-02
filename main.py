@@ -1,3 +1,4 @@
+import machine
 from machine import Pin, I2C
 import bme280
 import network
@@ -56,7 +57,12 @@ def format_datetime_custom(dt):
 # Zeit synchronisieren und ausgeben
 sync_time_with_dst()
 
-
+def reset_device(client):
+    response = b"HTTP/1.1 200 OK\r\nContent-Type: text/html\r\n\r\n<h1>Gerät wird neu gestartet...</h1>"
+    client.send(response)
+    client.close()
+    time.sleep(1)  # Warte kurz, damit die Antwort gesendet wird
+    machine.reset()  # Microcontroller neu starten
 
 # Klasse für den I2C-Multiplexer
 class I2CMultiplexer:
@@ -187,6 +193,8 @@ def handle_requests(s):
                 request[1] = "/index.html"
             elif request[1] == "/api/sensordata":  # API-Endpunkt für Ajax
                 send_sensor_data(cl)
+            elif request[1] == "/reset":  # Reset-Endpunkt
+                reset_device(cl)
             print('Angeforderte Datei:', request[1])
             if request[1] == "/index.html":
                 send_html_page(cl)
@@ -235,6 +243,8 @@ def sensor_loop():
         write_csv('sensor_data.csv', date, latest_bme280_temp, latest_bme280_pressure, latest_bme280_humidity, latest_ccs811_co2, latest_ccs811_tvoc, latest_bh1750_lux)
 
         sleep(10)  # 10 Sekunden Wartezeit zwischen den Messungen
+
+
 
 # Starten des Webservers und paralleles Starten des Sensor-Lesezyklus
 server = start_server()
