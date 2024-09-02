@@ -1,0 +1,222 @@
+<!DOCTYPE html>
+<html lang="de">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Sensor Dashboard</title>
+    <script src="https://cdn.plot.ly/plotly-latest.min.js"></script>
+    <style>
+        body {
+            font-family: Arial, sans-serif;
+            margin: 0;
+            padding: 0;
+            background-color: #333; /* Dunkler Hintergrund */
+            color: #fff; /* Helle Schrift */
+        }
+        #dashboard {
+            display: flex;
+            flex-wrap: wrap;
+            justify-content: space-around;
+            padding: 20px;
+        }
+        .data-box {
+            background-color: #444; /* Dunkler Hintergrund für die Kästchen */
+            border-radius: 10px;
+            padding: 10px 20px;
+            text-align: center;
+            width: 30%; /* Breite anpassen, damit alle Kästchen nebeneinander passen */
+            margin: 10px;
+        }
+        .data-box h3 {
+            margin: 10px 0;
+            font-size: 1.2em;
+            color: #FFD700; /* Goldene Schrift für die Titel */
+        }
+        .data-box p {
+            font-size: 1.6em;
+            margin: 5px 0;
+        }
+        .plotly-graph {
+            width: 100%;
+            height: 400px; /* Höhe des Graphen-Containers */
+            margin-bottom: 20px;
+        }
+    </style>
+</head>
+<body>
+
+<div id="dashboard">
+    <div class="data-box">
+        <h3>DHT22 Temperatur</h3>
+        <p id="latest-dht22-temp">-- °C</p>
+    </div>
+    <div class="data-box">
+        <h3>DHT22 Luftfeuchtigkeit</h3>
+        <p id="latest-dht22-humidity">-- %</p>
+    </div>
+    <div class="data-box">
+        <h3>BME280 Temperatur</h3>
+        <p id="latest-bme280-temp">-- °C</p>
+    </div>
+    <div class="data-box">
+        <h3>BME280 Luftdruck</h3>
+        <p id="latest-bme280-pressure">-- hPa</p>
+    </div>
+    <div class="data-box">
+        <h3>BME280 Luftfeuchtigkeit</h3>
+        <p id="latest-bme280-humidity">-- %</p>
+    </div>
+    <div class="data-box">
+        <h3>CCS811 CO2</h3>
+        <p id="latest-ccs811-co2">-- ppm</p>
+    </div>
+    <div class="data-box">
+        <h3>CCS811 TVOC</h3>
+        <p id="latest-ccs811-tvoc">-- ppb</p>
+    </div>
+    <div class="data-box">
+        <h3>BH1750 Lichtstärke</h3>
+        <p id="latest-bh1750-lux">-- Lux</p>
+    </div>
+</div>
+
+<div id="plotly-dht22-temp" class="plotly-graph"></div>
+<div id="plotly-dht22-humidity" class="plotly-graph"></div>
+<div id="plotly-bme280-temp" class="plotly-graph"></div>
+<div id="plotly-bme280-pressure" class="plotly-graph"></div>
+<div id="plotly-bme280-humidity" class="plotly-graph"></div>
+<div id="plotly-ccs811-co2" class="plotly-graph"></div>
+<div id="plotly-ccs811-tvoc" class="plotly-graph"></div>
+<div id="plotly-bh1750-lux" class="plotly-graph"></div>
+
+<script>
+// URL zur JSON-Datenquelle, die von Ihrer Python-Serveranwendung bereitgestellt wird
+const dataUrl = '/api/sensordata';
+
+// Funktion zum Laden der JSON-Daten und zum Zeichnen des Graphen
+async function loadAndPlotData() {
+    try {
+        // Lade die JSON-Daten
+        const response = await fetch(dataUrl);
+        const data = await response.json();
+
+        // Aktualisiere die Kästchen mit den zuletzt gemessenen Werten
+        const latestData = data; // Nehme das letzte Element der Datenreihe
+        document.getElementById('latest-dht22-temp').textContent = latestData.dht22_temp + ' °C';
+        document.getElementById('latest-dht22-humidity').textContent = latestData.dht22_humidity + ' %';
+        document.getElementById('latest-bme280-temp').textContent = latestData.bme280_temp + ' °C';
+        document.getElementById('latest-bme280-pressure').textContent = latestData.bme280_pressure + ' hPa';
+        document.getElementById('latest-bme280-humidity').textContent = latestData.bme280_humidity + ' %';
+        document.getElementById('latest-ccs811-co2').textContent = latestData.ccs811_co2 + ' ppm';
+        document.getElementById('latest-ccs811-tvoc').textContent = latestData.ccs811_tvoc + ' ppb';
+        document.getElementById('latest-bh1750-lux').textContent = latestData.bh1750_lux + ' Lux';
+
+        // Gemeinsame Layout-Konfiguration
+        const commonLayout = {
+            plot_bgcolor: "#333",  // Dunkler Hintergrund für den Graphen
+            paper_bgcolor: "#333", // Dunkler Hintergrund für das Papier
+            font: {
+                color: "#fff" // Helle Schrift
+            },
+            margin: {t: 40, b: 40, l: 60, r: 20}, // Margin anpassen
+            xaxis: {
+                title: 'Datum und Uhrzeit',
+                autorange: true,
+                color: '#ddd'  // Helle Schrift für Achsen
+            },
+            yaxis: {
+                autorange: true,
+                color: '#ddd'  // Helle Schrift für Achsen
+            }
+        };
+
+        // Erstelle den DHT22-Temperatur Graphen
+        Plotly.newPlot('plotly-dht22-temp', [{
+            x: data.map(entry => entry.date),
+            y: data.map(entry => entry.dht22_temp),
+            name: 'DHT22 Temperatur',
+            type: 'scatter',
+            mode: 'lines+markers',
+            marker: {color: 'red'}
+        }], {...commonLayout, title: 'DHT22 Temperatur'});
+
+        // Erstelle den DHT22-Luftfeuchtigkeit Graphen
+        Plotly.newPlot('plotly-dht22-humidity', [{
+            x: data.map(entry => entry.date),
+            y: data.map(entry => entry.dht22_humidity),
+            name: 'DHT22 Luftfeuchtigkeit',
+            type: 'scatter',
+            mode: 'lines+markers',
+            marker: {color: 'blue'}
+        }], {...commonLayout, title: 'DHT22 Luftfeuchtigkeit'});
+
+        // Erstelle den BME280-Temperatur Graphen
+        Plotly.newPlot('plotly-bme280-temp', [{
+            x: data.map(entry => entry.date),
+            y: data.map(entry => entry.bme280_temp),
+            name: 'BME280 Temperatur',
+            type: 'scatter',
+            mode: 'lines+markers',
+            marker: {color: 'green'}
+        }], {...commonLayout, title: 'BME280 Temperatur'});
+
+        // Erstelle den BME280-Luftdruck Graphen
+        Plotly.newPlot('plotly-bme280-pressure', [{
+            x: data.map(entry => entry.date),
+            y: data.map(entry => entry.bme280_pressure),
+            name: 'BME280 Luftdruck',
+            type: 'scatter',
+            mode: 'lines+markers',
+            marker: {color: 'orange'}
+        }], {...commonLayout, title: 'BME280 Luftdruck'});
+
+        // Erstelle den BME280-Luftfeuchtigkeit Graphen
+        Plotly.newPlot('plotly-bme280-humidity', [{
+            x: data.map(entry => entry.date),
+            y: data.map(entry => entry.bme280_humidity),
+            name: 'BME280 Luftfeuchtigkeit',
+            type: 'scatter',
+            mode: 'lines+markers',
+            marker: {color: 'cyan'}
+        }], {...commonLayout, title: 'BME280 Luftfeuchtigkeit'});
+
+        // Erstelle den CCS811-CO2 Graphen
+        Plotly.newPlot('plotly-ccs811-co2', [{
+            x: data.map(entry => entry.date),
+            y: data.map(entry => entry.ccs811_co2),
+            name: 'CCS811 CO2',
+            type: 'scatter',
+            mode: 'lines+markers',
+            marker: {color: 'purple'}
+        }], {...commonLayout, title: 'CCS811 CO2'});
+
+        // Erstelle den CCS811-TVOC Graphen
+        Plotly.newPlot('plotly-ccs811-tvoc', [{
+            x: data.map(entry => entry.date),
+            y: data.map(entry => entry.ccs811_tvoc),
+            name: 'CCS811 TVOC',
+            type: 'scatter',
+            mode: 'lines+markers',
+            marker: {color: 'magenta'}
+        }], {...commonLayout, title: 'CCS811 TVOC'});
+
+        // Erstelle den BH1750-Lichtstärke Graphen
+        Plotly.newPlot('plotly-bh1750-lux', [{
+            x: data.map(entry => entry.date),
+            y: data.map(entry => entry.bh1750_lux),
+            name: 'BH1750 Lichtstärke',
+            type: 'scatter',
+            mode: 'lines+markers',
+            marker: {color: 'yellow'}
+        }], {...commonLayout, title: 'BH1750 Lichtstärke'});
+    } catch (error) {
+        console.error('Fehler beim Laden der Daten:', error);
+    }
+}
+
+// Rufe die Funktion zum Laden und Zeichnen der Daten auf
+loadAndPlotData();
+</script>
+
+</body>
+</html>
