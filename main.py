@@ -1,70 +1,48 @@
-import machine
-from machine import Pin, I2C
+from machine import Pin, I2C, reset
 import bme280
 import network
 import socket
 import time
 import CCS811  # Importiere die CCS811-Bibliothek
 import bh1750  # BH1750-Bibliothek importieren
-from time import sleep
 import utime
 import _thread
 import json
 import ntptime
-import utime
+from ota import OTAUpdater
+from wifi_config import SSID, PASSWORD
+
+#trustmebro
 
 # Funktion zur Synchronisierung der Zeit und Anpassung an die lokale Zeitzone
 def sync_time_with_dst():
     try:
-        # Synchronisieren mit einem NTP-Server
         ntptime.settime()
-        
-        # Aktuelle Zeit in UTC abrufen
         tm = utime.localtime()
-        
-        # Überprüfen, ob Sommerzeit aktiv ist
-        if is_dst_europe(tm):
-            timezone_offset_hours = 2  # UTC+2 für MESZ
-        else:
-            timezone_offset_hours = 1  # UTC+1 für MEZ
-        
-        # Zeit anpassen an die lokale Zeitzone
+        timezone_offset_hours = 2 if is_dst_europe(tm) else 1
         local_time = utime.localtime(utime.time() + timezone_offset_hours * 3600)
-        
-        # Formatierte Zeit ausgeben
         print("Aktuelle lokale Uhrzeit:", format_datetime_custom(local_time))
-        
     except Exception as e:
         print("Fehler bei der Zeit-Synchronisation:", e)
 
-# Funktion zur Bestimmung, ob Sommerzeit in Europa gilt
 def is_dst_europe(dt):
     year, month, day, hour, minute, second, weekday, yearday = dt
-    # Sommerzeit gilt zwischen dem letzten Sonntag im März und dem letzten Sonntag im Oktober
-    if month > 3 and month < 10:  # Zwischen April und September ist immer Sommerzeit
+    if month > 3 and month < 10:
         return True
-    if month == 3:  # März, prüfe auf den letzten Sonntag
+    if month == 3:
         return (day + (6 - weekday)) > 31
-    if month == 10:  # Oktober, prüfe auf den letzten Sonntag
+    if month == 10:
         return not (day + (6 - weekday)) > 31
     return False
 
-# Funktion zur Formatierung des Datums und der Uhrzeit
 def format_datetime_custom(dt):
     year, month, day, hour, minute, second, _, _ = dt
     return "{:04d}/{:02d}/{:02d}-{:02d}:{:02d}:{:02d}".format(year, month, day, hour, minute, second)
 
-# Zeit synchronisieren und ausgeben
+# Zeit synchronisieren
 sync_time_with_dst()
 
-def reset_device(client):
-    response = b"HTTP/1.1 200 OK\r\nContent-Type: text/html\r\n\r\n<h1>Gerät wird neu gestartet...</h1>"
-    client.send(response)
-    client.close()
-    time.sleep(1)  # Warte kurz, damit die Antwort gesendet wird
-    machine.reset()  # Microcontroller neu starten
-
-# Klasse für den I2C-Multiplexer
+# I2C-Multiplexer Klasse
 class I2CMultiplexer:
     def __init__(self, i2c, address=0x70):
         self.i2c = i2c
@@ -74,9 +52,9 @@ class I2CMultiplexer:
         if channel < 0 or channel > 7:
             raise ValueError('Kanal muss zwischen 0 und 7 liegen')
         self.i2c.writeto(self.address, bytearray([1 << channel]))
-        time.sleep(0.1)  # Kurze Verzögerung, um sicherzustellen, dass der Kanal aktiviert ist
+        time.sleep(0.1)
 
-# Klasse zur Verwaltung der Sensoren
+# SensorManager Klasse
 class SensorManager:
     def __init__(self, multiplexer):
         self.multiplexer = multiplexer
@@ -141,7 +119,6 @@ latest_ccs811_co2 = None
 latest_ccs811_tvoc = None
 latest_bh1750_lux = None
 
-# Funktion zum Schreiben in eine CSV-Datei
 def write_csv(filename, date, bme280_temp, bme280_pressure, bme280_humidity, ccs811_co2, ccs811_tvoc, bh1750_lux):
     with open(filename, 'a') as csvfile:
         csvfile.write(f"{date},{bme280_temp},{bme280_pressure},{bme280_humidity},{ccs811_co2},{ccs811_tvoc},{bh1750_lux}\n")
@@ -153,7 +130,6 @@ wlan = network.WLAN(network.STA_IF)
 wlan.active(True)
 wlan.connect(ssid, password)
 
-# Auf die Verbindung warten
 max_wait = 10
 while max_wait > 0:
     status = wlan.status()
@@ -161,17 +137,13 @@ while max_wait > 0:
         break
     max_wait -= 1
     print('Warten auf Verbindung...')
-    sleep(1)
+    time.sleep(1)
 
-# Verbindung überprüfen
 if wlan.status() != network.STAT_GOT_IP:
     raise RuntimeError('Netzwerkverbindung fehlgeschlagen')
 else:
     print('Verbunden mit IP:', wlan.ifconfig()[0])
 
-
-
-# Funktion zum Starten des Servers
 def start_server():
     addr = socket.getaddrinfo('0.0.0.0', 80)[0][-1]
     s = socket.socket()
@@ -180,7 +152,6 @@ def start_server():
     print('Server gestartet. Warte auf Verbindung...')
     return s
 
-# Funktion zum Empfangen und Verarbeiten von Anfragen
 def handle_requests(s):
     while True:
         cl, addr = s.accept()
@@ -191,16 +162,17 @@ def handle_requests(s):
         if len(request) > 0 and request[0] == "b'GET":
             if request[1] == "/":
                 request[1] = "/index.html"
-            elif request[1] == "/api/sensordata":  # API-Endpunkt für Ajax
+            elif request[1] == "/api/sensordata":
                 send_sensor_data(cl)
-            elif request[1] == "/reset":  # Reset-Endpunkt
+            elif request[1] == "/reset":
                 reset_device(cl)
+            elif request[1] == "/update":
+                check_for_updates_endpoint(cl)
             print('Angeforderte Datei:', request[1])
             if request[1] == "/index.html":
                 send_html_page(cl)
         cl.close()
 
-# Funktion zum Senden der HTML-Seite
 def send_html_page(client):
     try:
         with open('index.html', 'rb') as f:
@@ -212,8 +184,6 @@ def send_html_page(client):
         client.send(response)
     client.close()
 
-
-# Funktion zum Senden der Sensordaten als JSON
 def send_sensor_data(client):
     data = {
         "bme280_temp": latest_bme280_temp,
@@ -227,27 +197,38 @@ def send_sensor_data(client):
     client.send(b"HTTP/1.1 200 OK\r\nContent-Type: application/json\r\n\r\n" + response.encode('utf-8'))
     client.close()
 
-# Schleife, um die Sensoren alle 10 Sekunden auszulesen und die Daten in eine CSV-Datei zu schreiben
+def reset_device(client):
+    response = b"HTTP/1.1 200 OK\r\nContent-Type: text/html\r\n\r\n<h1>Gerät wird neu gestartet...</h1>"
+    client.send(response)
+    client.close()
+    time.sleep(1)
+    reset()
+
+def check_for_updates_endpoint(client):
+    try:
+        firmware_url = "https://raw.githubusercontent.com/Luckz1337/Growbox/"
+        ota_updater = OTAUpdater(SSID, PASSWORD, firmware_url, "main.py")
+        ota_updater.download_and_install_update_if_available()
+        response = b"HTTP/1.1 200 OK\r\nContent-Type: text/html\r\n\r\n<h1>Update überprüft und installiert, wenn verfügbar</h1>"
+    except Exception as e:
+        response = b"HTTP/1.1 500 Internal Server Error\r\nContent-Type: text/html\r\n\r\n<h1>Fehler beim Überprüfen auf Updates</h1>"
+        print(f"Fehler beim Überprüfen auf Updates: {e}")
+    client.send(response)
+    client.close()
+
 def sensor_loop():
     global latest_bme280_temp, latest_bme280_pressure, latest_bme280_humidity
     global latest_ccs811_co2, latest_ccs811_tvoc, latest_bh1750_lux
 
     while True:
-        # Sensoren auslesen
         latest_bme280_temp, latest_bme280_pressure, latest_bme280_humidity = sensors.read_bme280()
         latest_ccs811_co2, latest_ccs811_tvoc = sensors.read_ccs811()
         latest_bh1750_lux = sensors.read_bh1750()
-
-        # CSV-Schreiben
         date = format_datetime_custom(utime.localtime())
         write_csv('sensor_data.csv', date, latest_bme280_temp, latest_bme280_pressure, latest_bme280_humidity, latest_ccs811_co2, latest_ccs811_tvoc, latest_bh1750_lux)
+        time.sleep(10)
 
-        sleep(10)  # 10 Sekunden Wartezeit zwischen den Messungen
-
-
-
-# Starten des Webservers und paralleles Starten des Sensor-Lesezyklus
 server = start_server()
 _thread.start_new_thread(sensor_loop, ())
-
 handle_requests(server)
+
