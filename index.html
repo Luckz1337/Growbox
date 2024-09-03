@@ -13,6 +13,21 @@
             background-color: #333; /* Dunkler Hintergrund */
             color: #fff; /* Helle Schrift */
         }
+        #navbar {
+            background-color: #ccc; /* Hellgrauer Hintergrund für den Balken */
+            padding: 10px;
+            text-align: right; /* Buttons rechts ausrichten */
+        }
+        .navbar-button {
+            background-color: #ff9800;
+            color: #fff;
+            border: none;
+            padding: 10px 20px;
+            margin-left: 10px;
+            font-size: 1.0em;
+            border-radius: 5px;
+            cursor: pointer;
+        }
         #dashboard {
             display: flex;
             flex-wrap: wrap;
@@ -41,20 +56,14 @@
             height: 400px; /* Höhe des Graphen-Containers */
             margin-bottom: 20px;
         }
-        .reset-button {
-            background-color: #ff9800;
-            color: #fff;
-            border: none;
-            padding: 10px 20px;
-            text-align: center;
-            font-size: 1.2em;
-            border-radius: 10px;
-            cursor: pointer;
-            margin-top: 20px;
-        }
     </style>
 </head>
 <body>
+
+<div id="navbar">
+    <button id="update-button" class="navbar-button">Nach Updates suchen</button>
+    <button id="reset-button" class="navbar-button">Microcontroller neu starten</button>
+</div>
 
 <div id="dashboard">
     <div class="data-box">
@@ -89,9 +98,6 @@
         <h3>BH1750 Lichtstärke</h3>
         <p id="latest-bh1750-lux">-- Lux</p>
     </div>
-    <div class="data-box">
-        <button id="reset-button" class="reset-button">Microcontroller neu starten</button>
-    </div>
 </div>
 
 <div id="plotly-dht22-temp" class="plotly-graph"></div>
@@ -115,7 +121,7 @@ async function loadAndPlotData() {
         const data = await response.json();
 
         // Aktualisiere die Kästchen mit den zuletzt gemessenen Werten
-        const latestData = data; // Nehme das letzte Element der Datenreihe
+        const latestData = data;
         document.getElementById('latest-dht22-temp').textContent = latestData.dht22_temp + ' °C';
         document.getElementById('latest-dht22-humidity').textContent = latestData.dht22_humidity + ' %';
         document.getElementById('latest-bme280-temp').textContent = latestData.bme280_temp + ' °C';
@@ -132,7 +138,7 @@ async function loadAndPlotData() {
             font: {
                 color: "#fff" // Helle Schrift
             },
-            margin: {t: 40, b: 40, l: 60, r: 20}, // Margin anpassen
+            margin: {t: 40, b: 40, l: 60, r: 20},
             xaxis: {
                 title: 'Datum und Uhrzeit',
                 autorange: true,
@@ -243,6 +249,21 @@ document.getElementById('reset-button').addEventListener('click', async function
     } catch (error) {
         console.error('Fehler beim Neustart:', error);
         alert("Fehler beim Neustart.");
+    }
+});
+
+// Funktion für den Update-Button
+document.getElementById('update-button').addEventListener('click', async function() {
+    try {
+        const response = await fetch('/update');
+        if (response.ok) {
+            alert("Update überprüft und installiert, wenn verfügbar.");
+        } else {
+            alert("Fehler beim Überprüfen auf Updates.");
+        }
+    } catch (error) {
+        console.error('Fehler beim Überprüfen auf Updates:', error);
+        alert("Fehler beim Überprüfen auf Updates.");
     }
 });
 </script>
