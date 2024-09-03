@@ -1,16 +1,17 @@
 from machine import Pin, I2C, reset
-import bme280
+from libraries import bme280  # Relativer Import
+from libraries import CCS811  # Importiere die CCS811-Bibliothek
+from libraries import bh1750  # BH1750-Bibliothek importieren
+from ota.ota import OTAUpdater
+from wifi_config import SSID, PASSWORD
 import network
 import socket
 import time
-import CCS811  # Importiere die CCS811-Bibliothek
-import bh1750  # BH1750-Bibliothek importieren
 import utime
 import _thread
 import json
 import ntptime
-from ota import OTAUpdater
-from wifi_config import SSID, PASSWORD
+import ota
 
 #trustmebro
 
@@ -231,4 +232,3 @@ def sensor_loop():
 server = start_server()
 _thread.start_new_thread(sensor_loop, ())
 handle_requests(server)
-
