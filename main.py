@@ -13,7 +13,7 @@ import json
 import ntptime
 import ota
 
-#trustmebros
+#trustmebroo
 
 # Funktion zur Synchronisierung der Zeit und Anpassung an die lokale Zeitzone
 def sync_time_with_dst():
@@ -232,4 +232,3 @@ def sensor_loop():
 server = start_server()
 _thread.start_new_thread(sensor_loop, ())
 handle_requests(server)
-
