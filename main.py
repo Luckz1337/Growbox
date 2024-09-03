@@ -216,7 +216,7 @@ def check_for_updates_endpoint(client):
         print(f"Fehler beim Überprüfen auf Updates: {e}")
     client.send(response)
     client.close()
-
+    
 def sensor_loop():
     global latest_bme280_temp, latest_bme280_pressure, latest_bme280_humidity
     global latest_ccs811_co2, latest_ccs811_tvoc, latest_bh1750_lux
@@ -232,3 +232,4 @@ def sensor_loop():
 server = start_server()
 _thread.start_new_thread(sensor_loop, ())
 handle_requests(server)
+
