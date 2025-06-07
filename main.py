@@ -1,5 +1,5 @@
 from machine import Pin, I2C, reset
-from libraries import bme280
+from libraries import bme680
 from libraries import CCS811
 from libraries import bh1750
 from ota.ota import OTAUpdater
@@ -12,8 +12,14 @@ import _thread
 import json
 import ntptime
 
-# Zeit-Sync mit Sommerzeit
+# 🛑 Vorherige Server-Verbindung beenden
+try:
+    server.close()
+    print("Alter Server geschlossen.")
+except:
+    pass
 
+# ---------------- Zeit und Datum ----------------
 def sync_time_with_dst():
     try:
         ntptime.settime()
@@ -40,6 +46,7 @@ def format_datetime_custom(dt):
 
 sync_time_with_dst()
 
+# ---------------- Multiplexer ----------------
 class I2CMultiplexer:
     def __init__(self, i2c, address=0x70):
         self.i2c = i2c
@@ -51,11 +58,12 @@ class I2CMultiplexer:
         self.i2c.writeto(self.address, bytearray([1 << channel]))
         time.sleep(0.1)
 
+# ---------------- SensorManager ----------------
 class SensorManager:
     def __init__(self, multiplexer):
         self.multiplexer = multiplexer
         self.ccs811 = None
-        self.bme280 = None
+        self.bme680 = None
         self.bh1750 = None
 
     def init_ccs811(self, channel):
@@ -67,12 +75,12 @@ class SensorManager:
         except Exception as e:
             print("Fehler beim Initialisieren von CCS811:", e)
 
-    def init_bme280(self, channel):
+    def init_bme680(self, channel):
         try:
             self.multiplexer.select_channel(channel)
-            self.bme280 = bme280.BME280(i2c=self.multiplexer.i2c)
+            self.bme680 = bme680.BME680_I2C(i2c=self.multiplexer.i2c, address=0x77)
         except Exception as e:
-            print("Fehler beim Initialisieren von BME280:", e)
+            print("Fehler beim Initialisieren von BME680:", e)
 
     def init_bh1750(self, channel):
         try:
@@ -91,15 +99,14 @@ class SensorManager:
             print("Fehler beim Lesen von CCS811:", e)
             return 0, 0
 
-    def read_bme280(self):
+    def read_bme680(self):
         try:
             self.multiplexer.select_channel(1)
-            if self.bme280:
-                temperature, pressure, humidity = self.bme280.read_compensated_data()
-                return temperature / 100, pressure / 25600, humidity / 1024
+            if self.bme680:
+                return self.bme680.get_sensor_data()
         except Exception as e:
-            print("Fehler beim Lesen von BME280:", e)
-        return 0, 0, 0
+            print("Fehler beim Lesen von BME680:", e)
+        return 0, 0, 0, 0
 
     def read_bh1750(self):
         try:
@@ -109,29 +116,43 @@ class SensorManager:
             print("Fehler beim Lesen von BH1750:", e)
             return 0.0
 
-# Setup
 
-i2c = I2C(0, scl=Pin(9), sda=Pin(8), freq=100000)
+# ---------------- I2C Setup ----------------
+I2C_SCL_PIN = 9
+I2C_SDA_PIN = 8
+
+i2c = I2C(0, scl=Pin(I2C_SCL_PIN), sda=Pin(I2C_SDA_PIN), freq=100000)
+
+# Optional: I2C-Scan
+print("I2C-Gerätescan...")
+devices = i2c.scan()
+if devices:
+    print("Gefundene Geräte:", [hex(d) for d in devices])
+else:
+    print("Keine I2C-Geräte gefunden – bitte Verkabelung prüfen.")
+
 multiplexer = I2CMultiplexer(i2c)
 sensors = SensorManager(multiplexer)
 
 sensors.init_ccs811(channel=0)
-sensors.init_bme280(channel=1)
+sensors.init_bme680(channel=1)
 sensors.init_bh1750(channel=2)
 
-latest_bme280_temp = None
-latest_bme280_pressure = None
-latest_bme280_humidity = None
+# ---------------- Sensorwerte ----------------
+latest_bme680_temp = None
+latest_bme680_pressure = None
+latest_bme680_humidity = None
+latest_bme680_gas = None
 latest_ccs811_co2 = None
 latest_ccs811_tvoc = None
 latest_bh1750_lux = None
 
-def write_csv(filename, date, bme280_temp, bme280_pressure, bme280_humidity, ccs811_co2, ccs811_tvoc, bh1750_lux):
-    with open(filename, 'a') as csvfile:
-        csvfile.write(f"{date},{bme280_temp},{bme280_pressure},{bme280_humidity},{ccs811_co2},{ccs811_tvoc},{bh1750_lux}\n")
+# ---------------- CSV ----------------
+def write_csv(filename, date, temp, pressure, humidity, gas, co2, tvoc, lux):
+    with open(filename, 'a') as f:
+        f.write(f"{date},{temp},{pressure},{humidity},{gas},{co2},{tvoc},{lux}\n")
 
-# WLAN
-
+# ---------------- WLAN ----------------
 wlan = network.WLAN(network.STA_IF)
 wlan.active(True)
 wlan.connect(SSID, PASSWORD)
@@ -148,9 +169,11 @@ if wlan.status() != network.STAT_GOT_IP:
 else:
     print('Verbunden mit IP:', wlan.ifconfig()[0])
 
+# ---------------- Webserver ----------------
 def start_server():
     addr = socket.getaddrinfo('0.0.0.0', 80)[0][-1]
     s = socket.socket()
+    s.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)  # Wichtig für ESP32
     s.bind(addr)
     s.listen(1)
     print('Server gestartet. Warte auf Verbindung...')
@@ -159,9 +182,10 @@ def start_server():
 def send_sensor_data(client):
     data = {
         "date": format_datetime_custom(utime.localtime()),
-        "bme280_temp": latest_bme280_temp,
-        "bme280_pressure": latest_bme280_pressure,
-        "bme280_humidity": latest_bme280_humidity,
+        "bme680_temp": latest_bme680_temp,
+        "bme680_pressure": latest_bme680_pressure,
+        "bme680_humidity": latest_bme680_humidity,
+        "bme680_gas": latest_bme680_gas,
         "ccs811_co2": latest_ccs811_co2,
         "ccs811_tvoc": latest_ccs811_tvoc,
         "bh1750_lux": latest_bh1750_lux
@@ -176,15 +200,16 @@ def send_csv_data_as_json(client):
         with open('sensor_data.csv') as f:
             for line in f:
                 parts = line.strip().split(",")
-                if len(parts) == 7:
+                if len(parts) == 8:
                     result.append({
                         "date": parts[0],
-                        "bme280_temp": float(parts[1]),
-                        "bme280_pressure": float(parts[2]),
-                        "bme280_humidity": float(parts[3]),
-                        "ccs811_co2": int(parts[4]),
-                        "ccs811_tvoc": int(parts[5]),
-                        "bh1750_lux": float(parts[6])
+                        "bme680_temp": float(parts[1]),
+                        "bme680_pressure": float(parts[2]),
+                        "bme680_humidity": float(parts[3]),
+                        "bme680_gas": float(parts[4]),
+                        "ccs811_co2": int(parts[5]),
+                        "ccs811_tvoc": int(parts[6]),
+                        "bh1750_lux": float(parts[7])
                     })
     except Exception as e:
         print("Fehler beim Lesen von CSV:", e)
@@ -232,22 +257,32 @@ def handle_requests(s):
                 cl.send(b"HTTP/1.1 500 Internal Server Error\r\n\r\n<h1>index.html fehlt.</h1>")
         cl.close()
 
+# ---------------- Sensor-Thread ----------------
 def sensor_loop():
-    global latest_bme280_temp, latest_bme280_pressure, latest_bme280_humidity
+    global latest_bme680_temp, latest_bme680_pressure, latest_bme680_humidity, latest_bme680_gas
     global latest_ccs811_co2, latest_ccs811_tvoc, latest_bh1750_lux
     while True:
         try:
-            latest_bme280_temp, latest_bme280_pressure, latest_bme280_humidity = sensors.read_bme280()
+            latest_bme680_temp, latest_bme680_pressure, latest_bme680_humidity, latest_bme680_gas = sensors.read_bme680()
             latest_ccs811_co2, latest_ccs811_tvoc = sensors.read_ccs811()
             latest_bh1750_lux = sensors.read_bh1750()
             date = format_datetime_custom(utime.localtime())
-            write_csv('sensor_data.csv', date, latest_bme280_temp, latest_bme280_pressure, latest_bme280_humidity,
-                      latest_ccs811_co2, latest_ccs811_tvoc, latest_bh1750_lux)
+            write_csv('sensor_data.csv', date, latest_bme680_temp, latest_bme680_pressure, latest_bme680_humidity,
+                      latest_bme680_gas, latest_ccs811_co2, latest_ccs811_tvoc, latest_bh1750_lux)
         except Exception as e:
             print("Fehler in sensor_loop:", e)
         time.sleep(10)
 
+# ---------------- Start ----------------
 server = start_server()
 _thread.start_new_thread(sensor_loop, ())
 handle_requests(server)
 
+print("Messwerte:")
+print(f"  Temperatur: {latest_bme680_temp} °C")
+print(f"  Druck: {latest_bme680_pressure} hPa")
+print(f"  Luftfeuchtigkeit: {latest_bme680_humidity} %")
+print(f"  Gaswiderstand: {latest_bme680_gas} Ohm")
+print(f"  CO₂: {latest_ccs811_co2} ppm")
+print(f"  TVOC: {latest_ccs811_tvoc} ppb")
+print(f"  Licht: {latest_bh1750_lux} Lux\n")
