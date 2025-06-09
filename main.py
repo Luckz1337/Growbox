@@ -12,14 +12,12 @@ import _thread
 import json
 import ntptime
 
-# 🛑 Vorherige Server-Verbindung beenden
 try:
     server.close()
     print("Alter Server geschlossen.")
 except:
     pass
 
-# ---------------- Zeit und Datum ----------------
 def sync_time_with_dst():
     try:
         ntptime.settime()
@@ -46,7 +44,6 @@ def format_datetime_custom(dt):
 
 sync_time_with_dst()
 
-# ---------------- Multiplexer ----------------
 class I2CMultiplexer:
     def __init__(self, i2c, address=0x70):
         self.i2c = i2c
@@ -58,7 +55,6 @@ class I2CMultiplexer:
         self.i2c.writeto(self.address, bytearray([1 << channel]))
         time.sleep(0.1)
 
-# ---------------- SensorManager ----------------
 class SensorManager:
     def __init__(self, multiplexer):
         self.multiplexer = multiplexer
@@ -103,7 +99,12 @@ class SensorManager:
         try:
             self.multiplexer.select_channel(1)
             if self.bme680:
-                return self.bme680.get_sensor_data()
+                return (
+                    self.bme680.temperature,
+                    self.bme680.pressure,
+                    self.bme680.humidity,
+                    self.bme680.gas
+                )
         except Exception as e:
             print("Fehler beim Lesen von BME680:", e)
         return 0, 0, 0, 0
@@ -116,14 +117,10 @@ class SensorManager:
             print("Fehler beim Lesen von BH1750:", e)
             return 0.0
 
-
-# ---------------- I2C Setup ----------------
 I2C_SCL_PIN = 9
 I2C_SDA_PIN = 8
-
 i2c = I2C(0, scl=Pin(I2C_SCL_PIN), sda=Pin(I2C_SDA_PIN), freq=100000)
 
-# Optional: I2C-Scan
 print("I2C-Gerätescan...")
 devices = i2c.scan()
 if devices:
@@ -138,7 +135,6 @@ sensors.init_ccs811(channel=0)
 sensors.init_bme680(channel=1)
 sensors.init_bh1750(channel=2)
 
-# ---------------- Sensorwerte ----------------
 latest_bme680_temp = None
 latest_bme680_pressure = None
 latest_bme680_humidity = None
@@ -147,12 +143,10 @@ latest_ccs811_co2 = None
 latest_ccs811_tvoc = None
 latest_bh1750_lux = None
 
-# ---------------- CSV ----------------
 def write_csv(filename, date, temp, pressure, humidity, gas, co2, tvoc, lux):
     with open(filename, 'a') as f:
         f.write(f"{date},{temp},{pressure},{humidity},{gas},{co2},{tvoc},{lux}\n")
 
-# ---------------- WLAN ----------------
 wlan = network.WLAN(network.STA_IF)
 wlan.active(True)
 wlan.connect(SSID, PASSWORD)
@@ -169,11 +163,10 @@ if wlan.status() != network.STAT_GOT_IP:
 else:
     print('Verbunden mit IP:', wlan.ifconfig()[0])
 
-# ---------------- Webserver ----------------
 def start_server():
     addr = socket.getaddrinfo('0.0.0.0', 80)[0][-1]
     s = socket.socket()
-    s.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)  # Wichtig für ESP32
+    s.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
     s.bind(addr)
     s.listen(1)
     print('Server gestartet. Warte auf Verbindung...')
@@ -257,7 +250,6 @@ def handle_requests(s):
                 cl.send(b"HTTP/1.1 500 Internal Server Error\r\n\r\n<h1>index.html fehlt.</h1>")
         cl.close()
 
-# ---------------- Sensor-Thread ----------------
 def sensor_loop():
     global latest_bme680_temp, latest_bme680_pressure, latest_bme680_humidity, latest_bme680_gas
     global latest_ccs811_co2, latest_ccs811_tvoc, latest_bh1750_lux
@@ -273,16 +265,8 @@ def sensor_loop():
             print("Fehler in sensor_loop:", e)
         time.sleep(10)
 
-# ---------------- Start ----------------
 server = start_server()
 _thread.start_new_thread(sensor_loop, ())
 handle_requests(server)
 
-print("Messwerte:")
-print(f"  Temperatur: {latest_bme680_temp} °C")
-print(f"  Druck: {latest_bme680_pressure} hPa")
-print(f"  Luftfeuchtigkeit: {latest_bme680_humidity} %")
-print(f"  Gaswiderstand: {latest_bme680_gas} Ohm")
-print(f"  CO₂: {latest_ccs811_co2} ppm")
-print(f"  TVOC: {latest_ccs811_tvoc} ppb")
-print(f"  Licht: {latest_bh1750_lux} Lux\n")
+
