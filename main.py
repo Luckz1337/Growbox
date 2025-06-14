@@ -1,4 +1,4 @@
-from machine import Pin, I2C, reset
+from machine import Pin, I2C, reset, WDT
 from libraries import bme680
 from libraries import CCS811
 from libraries import bh1750
@@ -11,262 +11,688 @@ import utime
 import _thread
 import json
 import ntptime
+import gc
+import os
+import math
 
-try:
-    server.close()
-    print("Alter Server geschlossen.")
-except:
-    pass
+# Konfiguration für ESP32-S3 FireBeetle 2
+CONFIG = {
+    'I2C_SCL_PIN': 2,        # Hardware I2C SCL Pin
+    'I2C_SDA_PIN': 1,        # Hardware I2C SDA Pin  
+    'I2C_FREQ': 100000,
+    'LED_PIN': 21,           # Onboard LED Pin (geändert von 12 auf 21)
+    'SENSOR_READ_INTERVAL': 10,
+    'WIFI_TIMEOUT': 30,
+    'MAX_RETRIES': 3,
+    'CSV_MAX_LINES': 500,
+    'MEMORY_THRESHOLD': 50000,  # ESP32-S3 hat mehr RAM
+}
 
-def sync_time_with_dst():
+# Vereinfachte Error-Klasse
+def log_error(component, error):
+    print(f"[{component}] {error}")
+
+# Vereinfachte Memory-Checks
+def check_memory():
+    free = gc.mem_free()
+    if free < CONFIG['MEMORY_THRESHOLD']:
+        gc.collect()
+        return gc.mem_free()
+    return free
+
+def cleanup_csv(filename, max_lines):
     try:
-        ntptime.settime()
-        tm = utime.localtime()
-        timezone_offset_hours = 2 if is_dst_europe(tm) else 1
-        local_time = utime.localtime(utime.time() + timezone_offset_hours * 3600)
-        print("Aktuelle lokale Uhrzeit:", format_datetime_custom(local_time))
+        # Lese nur die Anzahl der Zeilen
+        line_count = 0
+        with open(filename, 'r') as f:
+            for _ in f:
+                line_count += 1
+        
+        if line_count > max_lines:
+            # Lese alle Zeilen und behalte nur die letzten
+            lines = []
+            with open(filename, 'r') as f:
+                for line in f:
+                    lines.append(line)
+                    if len(lines) > max_lines:
+                        lines.pop(0)
+            
+            # Schreibe zurück
+            with open(filename, 'w') as f:
+                for line in lines:
+                    f.write(line)
+            print(f"CSV auf {max_lines} Zeilen gekürzt")
     except Exception as e:
-        print("Fehler bei der Zeit-Synchronisation:", e)
+        log_error("CSV cleanup", str(e))
 
+# VPD Berechnung
+def calculate_vpd(temp_c, humidity_percent):
+    """
+    Berechnet den Vapor Pressure Deficit (VPD) in kPa
+    
+    Args:
+        temp_c: Temperatur in Celsius
+        humidity_percent: Relative Luftfeuchtigkeit in Prozent
+    
+    Returns:
+        VPD in kPa
+    """
+    try:
+        # Sättigungsdampfdruck bei gegebener Temperatur (kPa)
+        # Magnus-Formel
+        svp = 0.6108 * math.exp((17.27 * temp_c) / (temp_c + 237.3))
+        
+        # Aktueller Dampfdruck
+        avp = svp * (humidity_percent / 100.0)
+        
+        # VPD = Sättigungsdampfdruck - Aktueller Dampfdruck
+        vpd = svp - avp
+        
+        return round(vpd, 3)
+    except:
+        return 0
+
+def get_vpd_status(vpd):
+    """
+    Bewertet den VPD-Wert
+    
+    Returns:
+        Status string: "optimal", "warning", "critical"
+    """
+    if 0.8 <= vpd <= 1.2:
+        return "optimal"
+    elif 0.4 <= vpd <= 1.6:
+        return "warning"
+    else:
+        return "critical"
+
+class WiFiManager:
+    def __init__(self, ssid, password):
+        self.ssid = ssid
+        self.password = password
+        self.wlan = network.WLAN(network.STA_IF)
+        
+    def connect(self):
+        self.wlan.active(True)
+        self.wlan.connect(self.ssid, self.password)
+        
+        for _ in range(CONFIG['WIFI_TIMEOUT']):
+            # ESP32-S3 verwendet Status 1010 für erfolgreiche Verbindung
+            if self.wlan.status() == 1010:  # STAT_GOT_IP für ESP32-S3
+                print(f'WiFi verbunden: {self.wlan.ifconfig()[0]}')
+                return True
+            time.sleep(1)
+        return False
+    
+    def is_connected(self):
+        return self.wlan.status() == 1010  # STAT_GOT_IP für ESP32-S3
+
+# Zeit-Funktionen
 def is_dst_europe(dt):
-    year, month, day, hour, minute, second, weekday, yearday = dt
+    month = dt[1]
     if month > 3 and month < 10:
         return True
-    if month == 3:
-        return (day + (6 - weekday)) > 31
-    if month == 10:
-        return not (day + (6 - weekday)) > 31
-    return False
+    return month == 3 and (dt[2] + (6 - dt[6])) > 31
 
-def format_datetime_custom(dt):
-    year, month, day, hour, minute, second, _, _ = dt
-    return "{:04d}/{:02d}/{:02d}-{:02d}:{:02d}:{:02d}".format(year, month, day, hour, minute, second)
+def localtime_with_offset():
+    tz_offset = 2 * 3600 if is_dst_europe(utime.localtime()) else 1 * 3600
+    return utime.localtime(utime.time() + tz_offset)
 
-sync_time_with_dst()
+def format_datetime(dt):
+    return "{:04d}/{:02d}/{:02d}-{:02d}:{:02d}:{:02d}".format(
+        dt[0], dt[1], dt[2], dt[3], dt[4], dt[5])
+
+def sync_time():
+    try:
+        ntptime.settime()
+        print("Zeit synchronisiert:", format_datetime(localtime_with_offset()))
+        return True
+    except:
+        return False
 
 class I2CMultiplexer:
-    def __init__(self, i2c, address=0x70):
+    def __init__(self, i2c):
         self.i2c = i2c
-        self.address = address
+        self.current = None
 
-    def select_channel(self, channel):
-        if channel < 0 or channel > 7:
-            raise ValueError('Kanal muss zwischen 0 und 7 liegen')
-        self.i2c.writeto(self.address, bytearray([1 << channel]))
-        time.sleep(0.1)
+    def select(self, ch):
+        if self.current != ch:
+            try:
+                self.i2c.writeto(0x70, bytearray([1 << ch]))
+                self.current = ch
+                time.sleep(0.05)
+            except Exception as e:
+                log_error("I2C Mux", f"Kanal {ch}: {str(e)}")
 
 class SensorManager:
-    def __init__(self, multiplexer):
-        self.multiplexer = multiplexer
-        self.ccs811 = None
-        self.bme680 = None
-        self.bh1750 = None
+    def __init__(self, mux):
+        self.mux = mux
+        self.sensors = {}
+        self.last = {}  # Letzte Werte
 
-    def init_ccs811(self, channel):
+    def init_sensors(self):
+        # LED für Status-Anzeige
+        self.status_led = Pin(CONFIG['LED_PIN'], Pin.OUT)
+        
+        # CCS811
         try:
-            self.multiplexer.select_channel(channel)
-            self.ccs811 = CCS811.CCS811(i2c=self.multiplexer.i2c, addr=0x5A)
-            while not self.ccs811.data_ready():
-                time.sleep(1)
+            self.mux.select(0)
+            self.sensors['ccs811'] = CCS811.CCS811(i2c=self.mux.i2c, addr=0x5A)
+            print("CCS811 initialisiert")
+            self.status_led.on()
+            time.sleep(0.1)
+            self.status_led.off()
         except Exception as e:
-            print("Fehler beim Initialisieren von CCS811:", e)
-
-    def init_bme680(self, channel):
+            log_error("CCS811 init", str(e))
+            
+        # BME680
         try:
-            self.multiplexer.select_channel(channel)
-            self.bme680 = bme680.BME680_I2C(i2c=self.multiplexer.i2c, address=0x77)
+            self.mux.select(1)
+            self.sensors['bme680'] = bme680.BME680_I2C(i2c=self.mux.i2c, address=0x77)
+            print("BME680 initialisiert")
+            self.status_led.on()
+            time.sleep(0.1)
+            self.status_led.off()
         except Exception as e:
-            print("Fehler beim Initialisieren von BME680:", e)
-
-    def init_bh1750(self, channel):
+            log_error("BME680 init", str(e))
+            
+        # BH1750
         try:
-            self.multiplexer.select_channel(channel)
-            self.bh1750 = bh1750.BH1750(self.multiplexer.i2c)
+            self.mux.select(2)
+            self.sensors['bh1750'] = bh1750.BH1750(self.mux.i2c)
+            print("BH1750 initialisiert")
+            self.status_led.on()
+            time.sleep(0.1)
+            self.status_led.off()
         except Exception as e:
-            print("Fehler beim Initialisieren von BH1750:", e)
+            log_error("BH1750 init", str(e))
 
-    def read_ccs811(self):
-        try:
-            self.multiplexer.select_channel(0)
-            co2 = self.ccs811.eCO2 if self.ccs811 else 0
-            tvoc = self.ccs811.tVOC if self.ccs811 else 0
-            return co2, tvoc
-        except Exception as e:
-            print("Fehler beim Lesen von CCS811:", e)
-            return 0, 0
-
-    def read_bme680(self):
-        try:
-            self.multiplexer.select_channel(1)
-            if self.bme680:
-                return (
-                    self.bme680.temperature,
-                    self.bme680.pressure,
-                    self.bme680.humidity,
-                    self.bme680.gas
-                )
-        except Exception as e:
-            print("Fehler beim Lesen von BME680:", e)
-        return 0, 0, 0, 0
-
-    def read_bh1750(self):
-        try:
-            self.multiplexer.select_channel(2)
-            return self.bh1750.luminance(bh1750.BH1750.CONT_HIRES_1) if self.bh1750 else 0.0
-        except Exception as e:
-            print("Fehler beim Lesen von BH1750:", e)
-            return 0.0
-
-I2C_SCL_PIN = 9
-I2C_SDA_PIN = 8
-i2c = I2C(0, scl=Pin(I2C_SCL_PIN), sda=Pin(I2C_SDA_PIN), freq=100000)
-
-print("I2C-Gerätescan...")
-devices = i2c.scan()
-if devices:
-    print("Gefundene Geräte:", [hex(d) for d in devices])
-else:
-    print("Keine I2C-Geräte gefunden – bitte Verkabelung prüfen.")
-
-multiplexer = I2CMultiplexer(i2c)
-sensors = SensorManager(multiplexer)
-
-sensors.init_ccs811(channel=0)
-sensors.init_bme680(channel=1)
-sensors.init_bh1750(channel=2)
-
-latest_bme680_temp = None
-latest_bme680_pressure = None
-latest_bme680_humidity = None
-latest_bme680_gas = None
-latest_ccs811_co2 = None
-latest_ccs811_tvoc = None
-latest_bh1750_lux = None
-
-def write_csv(filename, date, temp, pressure, humidity, gas, co2, tvoc, lux):
-    with open(filename, 'a') as f:
-        f.write(f"{date},{temp},{pressure},{humidity},{gas},{co2},{tvoc},{lux}\n")
-
-wlan = network.WLAN(network.STA_IF)
-wlan.active(True)
-wlan.connect(SSID, PASSWORD)
-
-max_wait = 10
-while max_wait > 0:
-    if wlan.status() == network.STAT_GOT_IP:
-        break
-    max_wait -= 1
-    time.sleep(1)
-
-if wlan.status() != network.STAT_GOT_IP:
-    raise RuntimeError('Netzwerkverbindung fehlgeschlagen')
-else:
-    print('Verbunden mit IP:', wlan.ifconfig()[0])
-
-def start_server():
-    addr = socket.getaddrinfo('0.0.0.0', 80)[0][-1]
-    s = socket.socket()
-    s.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
-    s.bind(addr)
-    s.listen(1)
-    print('Server gestartet. Warte auf Verbindung...')
-    return s
-
-def send_sensor_data(client):
-    data = {
-        "date": format_datetime_custom(utime.localtime()),
-        "bme680_temp": latest_bme680_temp,
-        "bme680_pressure": latest_bme680_pressure,
-        "bme680_humidity": latest_bme680_humidity,
-        "bme680_gas": latest_bme680_gas,
-        "ccs811_co2": latest_ccs811_co2,
-        "ccs811_tvoc": latest_ccs811_tvoc,
-        "bh1750_lux": latest_bh1750_lux
-    }
-    response = json.dumps(data)
-    client.send(b"HTTP/1.1 200 OK\r\nContent-Type: application/json\r\n\r\n" + response.encode('utf-8'))
-    client.close()
-
-def send_csv_data_as_json(client):
-    result = []
-    try:
-        with open('sensor_data.csv') as f:
-            for line in f:
-                parts = line.strip().split(",")
-                if len(parts) == 8:
-                    result.append({
-                        "date": parts[0],
-                        "bme680_temp": float(parts[1]),
-                        "bme680_pressure": float(parts[2]),
-                        "bme680_humidity": float(parts[3]),
-                        "bme680_gas": float(parts[4]),
-                        "ccs811_co2": int(parts[5]),
-                        "ccs811_tvoc": int(parts[6]),
-                        "bh1750_lux": float(parts[7])
-                    })
-    except Exception as e:
-        print("Fehler beim Lesen von CSV:", e)
-    response = json.dumps(result)
-    client.send(b"HTTP/1.1 200 OK\r\nContent-Type: application/json\r\n\r\n" + response.encode('utf-8'))
-    client.close()
-
-def reset_device(client):
-    client.send(b"HTTP/1.1 200 OK\r\nContent-Type: text/html\r\n\r\n<h1>Gerät wird neu gestartet...</h1>")
-    client.close()
-    time.sleep(1)
-    reset()
-
-def check_for_updates_endpoint(client):
-    try:
-        firmware_url = "https://raw.githubusercontent.com/Luckz1337/Growbox/"
-        ota_updater = OTAUpdater(SSID, PASSWORD, firmware_url, "main.py")
-        ota_updater.download_and_install_update_if_available()
-        client.send(b"HTTP/1.1 200 OK\r\nContent-Type: text/html\r\n\r\n<h1>Update abgeschlossen.</h1>")
-    except Exception as e:
-        print("Fehler beim OTA:", e)
-        client.send(b"HTTP/1.1 500 Internal Server Error\r\n\r\n<h1>OTA fehlgeschlagen.</h1>")
-    client.close()
-
-def handle_requests(s):
-    while True:
-        cl, addr = s.accept()
-        request = cl.recv(1024).decode()
-        path = request.split(" ")[1] if len(request.split(" ")) > 1 else "/"
-        if path == "/":
-            path = "/index.html"
-        if path == "/api/sensordata":
-            send_sensor_data(cl)
-        elif path == "/api/history":
-            send_csv_data_as_json(cl)
-        elif path == "/reset":
-            reset_device(cl)
-        elif path == "/update":
-            check_for_updates_endpoint(cl)
-        elif path == "/index.html":
+    def read_all(self):
+        data = {}
+        
+        # BME680
+        if 'bme680' in self.sensors:
             try:
-                with open("index.html", "rb") as f:
-                    cl.send(b"HTTP/1.1 200 OK\r\nContent-Type: text/html\r\n\r\n" + f.read())
+                self.mux.select(1)
+                s = self.sensors['bme680']
+                data['temp'] = s.temperature
+                data['pres'] = s.pressure
+                data['hum'] = s.humidity
+                data['gas'] = s.gas
+                # Berechne VPD
+                data['vpd'] = calculate_vpd(data['temp'], data['hum'])
+                data['vpd_status'] = get_vpd_status(data['vpd'])
+                self.last['bme680'] = (data['temp'], data['pres'], data['hum'], data['gas'], data['vpd'])
+            except Exception as e:
+                log_error("BME680 read", str(e))
+                if 'bme680' in self.last:
+                    data['temp'], data['pres'], data['hum'], data['gas'], data['vpd'] = self.last['bme680']
+                    data['vpd_status'] = get_vpd_status(data['vpd'])
+                else:
+                    data['temp'] = data['pres'] = data['hum'] = data['gas'] = 0
+                    data['vpd'] = 0
+                    data['vpd_status'] = "unknown"
+        
+        # CCS811
+        if 'ccs811' in self.sensors:
+            try:
+                self.mux.select(0)
+                s = self.sensors['ccs811']
+                if s.data_ready():
+                    data['co2'] = s.eCO2
+                    data['tvoc'] = s.tVOC
+                    self.last['ccs811'] = (data['co2'], data['tvoc'])
+                elif 'ccs811' in self.last:
+                    data['co2'], data['tvoc'] = self.last['ccs811']
+                else:
+                    data['co2'] = 400
+                    data['tvoc'] = 0
+            except Exception as e:
+                log_error("CCS811 read", str(e))
+                data['co2'] = 400
+                data['tvoc'] = 0
+        else:
+            data['co2'] = 400
+            data['tvoc'] = 0
+        
+        # BH1750
+        if 'bh1750' in self.sensors:
+            try:
+                self.mux.select(2)
+                data['lux'] = self.sensors['bh1750'].luminance(bh1750.BH1750.CONT_HIRES_1)
+                self.last['bh1750'] = data['lux']
+            except Exception as e:
+                log_error("BH1750 read", str(e))
+                data['lux'] = self.last.get('bh1750', 0)
+        else:
+            data['lux'] = 0
+            
+        return data
+
+def write_csv(date, data):
+    try:
+        with open('sensor_data.csv', 'a') as f:
+            f.write(f"{date},{data['temp']},{data['pres']},{data['hum']},{data['gas']},{data['co2']},{data['tvoc']},{data['lux']},{data['vpd']}\n")
+    except Exception as e:
+        log_error("CSV write", str(e))
+
+class WebServer:
+    def __init__(self):
+        self.server = None
+        
+    def start(self):
+        addr = socket.getaddrinfo('0.0.0.0', 80)[0][-1]
+        self.server = socket.socket()
+        self.server.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
+        self.server.bind(addr)
+        self.server.listen(1)
+        print('Webserver gestartet auf Port 80')
+        return self.server
+
+    def send_file_chunked(self, client, filename, content_type):
+        """Sendet Datei in kleinen Chunks"""
+        try:
+            # Sende Header
+            headers = f"HTTP/1.1 200 OK\r\nContent-Type: {content_type}\r\nTransfer-Encoding: chunked\r\n\r\n"
+            client.send(headers.encode())
+            
+            # Sende Datei in 1024-Byte Chunks (ESP32-S3 hat mehr RAM)
+            with open(filename, 'rb') as f:
+                while True:
+                    chunk = f.read(1024)
+                    if not chunk:
+                        break
+                    
+                    # Chunk-Format: Größe in Hex + CRLF + Daten + CRLF
+                    size = hex(len(chunk))[2:]
+                    client.send(f"{size}\r\n".encode())
+                    client.send(chunk)
+                    client.send(b"\r\n")
+                    
+                    # Kurze Pause für Speicher
+                    time.sleep(0.01)
+                    gc.collect()
+                
+                # Ende-Marker
+                client.send(b"0\r\n\r\n")
+                
+        except Exception as e:
+            log_error("send_file", str(e))
+
+    def send_json(self, client, data):
+        try:
+            response = json.dumps(data)
+            print(f"JSON Response length: {len(response)}")  # Debug
+            headers = f"HTTP/1.1 200 OK\r\nContent-Type: application/json\r\nAccess-Control-Allow-Origin: *\r\nContent-Length: {len(response)}\r\n\r\n"
+            client.send(headers.encode() + response.encode())
+        except Exception as e:
+            log_error("send_json", str(e))
+            # Sende Fehler-Response
+            error_response = '{"error": "Internal server error"}'
+            headers = f"HTTP/1.1 500 Internal Server Error\r\nContent-Type: application/json\r\nContent-Length: {len(error_response)}\r\n\r\n"
+            client.send(headers.encode() + error_response.encode())
+
+    def send_history(self, client):
+        """Sendet CSV-Historie als JSON-Stream"""
+        try:
+            headers = "HTTP/1.1 200 OK\r\nContent-Type: application/json\r\nTransfer-Encoding: chunked\r\n\r\n"
+            client.send(headers.encode())
+            
+            # Start Array
+            client.send(b"2\r\n[\r\n")
+            
+            first = True
+            line_count = 0
+            
+            with open('sensor_data.csv', 'r') as f:
+                # Skip header
+                f.readline()
+                
+                # Zähle Zeilen
+                lines = []
+                for line in f:
+                    lines.append(line)
+                
+                # Nur die letzten 50 (ESP32-S3 kann mehr)
+                for line in lines[-50:]:
+                    parts = line.strip().split(",")
+                    if len(parts) >= 8:  # Mindestens 8 Felder (vpd ist optional für alte Daten)
+                        try:
+                            entry = {
+                                "date": parts[0],
+                                "bme680_temp": float(parts[1]),
+                                "bme680_pressure": float(parts[2]),
+                                "bme680_humidity": float(parts[3]),
+                                "bme680_gas": float(parts[4]),
+                                "ccs811_co2": int(parts[5]),
+                                "ccs811_tvoc": int(parts[6]),
+                                "bh1750_lux": float(parts[7])
+                            }
+                            
+                            # VPD hinzufügen wenn vorhanden
+                            if len(parts) > 8:
+                                entry["vpd"] = float(parts[8])
+                            else:
+                                # Berechne VPD für alte Daten
+                                entry["vpd"] = calculate_vpd(entry["bme680_temp"], entry["bme680_humidity"])
+                            
+                            if not first:
+                                client.send(b"1\r\n,\r\n")
+                            else:
+                                first = False
+                                
+                            chunk = json.dumps(entry)
+                            size = hex(len(chunk))[2:]
+                            client.send(f"{size}\r\n{chunk}\r\n".encode())
+                            
+                        except:
+                            continue
+            
+            # Ende Array
+            client.send(b"2\r\n]\r\n")
+            client.send(b"0\r\n\r\n")
+            
+        except Exception as e:
+            log_error("send_history", str(e))
+
+    def handle(self, client, path, sensor_data):
+        try:
+            print(f"Request: {path}")  # Debug-Ausgabe
+            
+            if path == "/" or path == "/index.html":
+                self.send_file_chunked(client, "index.html", "text/html")
+            elif path == "/api/sensordata":
+                print(f"Sending sensor data: {sensor_data}")  # Debug
+                self.send_json(client, sensor_data)
+            elif path == "/api/history":
+                self.send_history(client)
+            elif path == "/api/status":
+                # Erweiterte System-Metriken für API
+                free_mem = gc.mem_free()
+                alloc_mem = gc.mem_alloc()
+                total_mem = free_mem + alloc_mem
+                mem_usage = (alloc_mem / total_mem) * 100
+                
+                # WiFi-Metriken
+                rssi = wifi.wlan.status('rssi')
+                ip_config = wifi.wlan.ifconfig()
+                mac = ':'.join(['{:02x}'.format(b) for b in wifi.wlan.config('mac')])
+                
+                # System-Info
+                import machine
+                freq = machine.freq()
+                uptime_sec = time.ticks_ms() // 1000
+                
+                # CSV-Datei Info
+                csv_size = 0
+                csv_lines = 0
+                try:
+                    stat = os.stat('sensor_data.csv')
+                    csv_size = stat[6]
+                    with open('sensor_data.csv', 'r') as f:
+                        csv_lines = sum(1 for _ in f) - 1  # Header nicht mitzählen
+                except:
+                    pass
+                
+                status = {
+                    # Speicher
+                    "memory": {
+                        "total": total_mem,
+                        "free": free_mem,
+                        "allocated": alloc_mem,
+                        "usage_percent": round(mem_usage, 1)
+                    },
+                    # WiFi
+                    "wifi": {
+                        "rssi": rssi,
+                        "signal_quality": "Exzellent" if rssi > -50 else "Sehr gut" if rssi > -60 else "Gut" if rssi > -70 else "Schwach",
+                        "ip_address": ip_config[0],
+                        "subnet": ip_config[1],
+                        "gateway": ip_config[2],
+                        "dns": ip_config[3],
+                        "mac_address": mac
+                    },
+                    # System
+                    "system": {
+                        "chip": "ESP32-S3",
+                        "cpu_freq": freq,
+                        "uptime_seconds": uptime_sec,
+                        "uptime_formatted": f"{uptime_sec//3600}h {(uptime_sec%3600)//60}m {uptime_sec%60}s"
+                    },
+                    # Daten
+                    "data": {
+                        "csv_size_bytes": csv_size,
+                        "csv_lines": csv_lines,
+                        "sensor_interval": CONFIG['SENSOR_READ_INTERVAL']
+                    },
+                    "timestamp": format_datetime(localtime_with_offset())
+                }
+                self.send_json(client, status)
+            elif path == "/test":
+                # Test-Endpoint
+                test_data = {
+                    "test": "OK",
+                    "timestamp": format_datetime(localtime_with_offset()),
+                    "message": "ESP32-S3 Test Response"
+                }
+                self.send_json(client, test_data)
+            elif path == "/reset":
+                client.send(b"HTTP/1.1 200 OK\r\n\r\nReset...")
+                client.close()
+                time.sleep(1)
+                reset()
+            else:
+                client.send(b"HTTP/1.1 404 Not Found\r\n\r\n404")
+        except Exception as e:
+            log_error("handle", str(e))
+        finally:
+            try:
+                client.close()
             except:
-                cl.send(b"HTTP/1.1 500 Internal Server Error\r\n\r\n<h1>index.html fehlt.</h1>")
-        cl.close()
+                pass
+
+# Globale Variablen
+wifi = None
+sensors = None
+sensor_data = {}
 
 def sensor_loop():
-    global latest_bme680_temp, latest_bme680_pressure, latest_bme680_humidity, latest_bme680_gas
-    global latest_ccs811_co2, latest_ccs811_tvoc, latest_bh1750_lux
+    global sensor_data
+    counter = 0
+    
     while True:
         try:
-            latest_bme680_temp, latest_bme680_pressure, latest_bme680_humidity, latest_bme680_gas = sensors.read_bme680()
-            latest_ccs811_co2, latest_ccs811_tvoc = sensors.read_ccs811()
-            latest_bh1750_lux = sensors.read_bh1750()
-            date = format_datetime_custom(utime.localtime())
-            write_csv('sensor_data.csv', date, latest_bme680_temp, latest_bme680_pressure, latest_bme680_humidity,
-                      latest_bme680_gas, latest_ccs811_co2, latest_ccs811_tvoc, latest_bh1750_lux)
+            # Sensoren lesen
+            data = sensors.read_all()
+            date = format_datetime(localtime_with_offset())
+            
+            # Update global data
+            sensor_data = {
+                "date": date,
+                "bme680_temp": data['temp'],
+                "bme680_pressure": data['pres'],
+                "bme680_humidity": data['hum'],
+                "bme680_gas": data['gas'],
+                "ccs811_co2": data['co2'],
+                "ccs811_tvoc": data['tvoc'],
+                "bh1750_lux": data['lux'],
+                "vpd": data['vpd'],
+                "vpd_status": data['vpd_status']
+            }
+            
+            # CSV schreiben
+            write_csv(date, data)
+            
+            # Alle Messwerte ausgeben
+            print("=" * 60)
+            print(f"📊 SENSOR DATEN - {date}")
+            print("=" * 60)
+            print(f"🌡️  BME680 Temperatur:    {data['temp']:.1f} °C")
+            print(f"🌊 BME680 Luftdruck:     {data['pres']:.1f} hPa")
+            print(f"💧 BME680 Luftfeuchte:   {data['hum']:.1f} %")
+            print(f"🔥 BME680 Gas-Widerstand: {data['gas']:.0f} Ω")
+            print(f"💨 VPD (Dampfdruckdefizit): {data['vpd']:.3f} kPa ({data['vpd_status']})")
+            print(f"🏭 CCS811 CO2:           {data['co2']} ppm")
+            print(f"🌫️  CCS811 TVOC:          {data['tvoc']} ppb")
+            print(f"💡 BH1750 Helligkeit:    {data['lux']:.1f} lux")
+            
+            # System-Metriken alle 5 Zyklen
+            counter += 1
+            if counter % 5 == 0:
+                print("-" * 60)
+                print("🖥️  SYSTEM METRIKEN")
+                print("-" * 60)
+                
+                # Speicher-Info
+                free_mem = gc.mem_free()
+                alloc_mem = gc.mem_alloc()
+                total_mem = free_mem + alloc_mem
+                mem_usage = (alloc_mem / total_mem) * 100
+                
+                print(f"🧠 RAM Gesamt:           {total_mem:,} Bytes")
+                print(f"💾 RAM Belegt:           {alloc_mem:,} Bytes ({mem_usage:.1f}%)")
+                print(f"🆓 RAM Frei:             {free_mem:,} Bytes")
+                
+                # WiFi-Info
+                rssi = wifi.wlan.status('rssi')
+                ip = wifi.wlan.ifconfig()[0]
+                mac = ':'.join(['{:02x}'.format(b) for b in wifi.wlan.config('mac')])
+                
+                print(f"📶 WiFi Signal:          {rssi} dBm")
+                print(f"🌐 IP-Adresse:           {ip}")
+                print(f"🔗 MAC-Adresse:          {mac}")
+                
+                # System-Info
+                import machine
+                freq = machine.freq()
+                temp = machine.temperature() if hasattr(machine, 'temperature') else "N/A"
+                
+                print(f"⚡ CPU Frequenz:          {freq:,} Hz")
+                if temp != "N/A":
+                    print(f"🌡️  CPU Temperatur:        {temp:.1f} °C")
+                
+                # Uptime
+                uptime_sec = time.ticks_ms() // 1000
+                uptime_min = uptime_sec // 60
+                uptime_hours = uptime_min // 60
+                print(f"⏱️  Uptime:               {uptime_hours}h {uptime_min % 60}m {uptime_sec % 60}s")
+                
+                # Datei-Info
+                try:
+                    stat = os.stat('sensor_data.csv')
+                    file_size = stat[6]  # Dateigröße
+                    print(f"📁 CSV Dateigröße:        {file_size:,} Bytes")
+                except:
+                    print("📁 CSV Dateigröße:        Unbekannt")
+                
+                print(f"📈 Messung #{counter}")
+            
+            # Gelegentlich aufräumen
+            if counter % 30 == 0:  # Öfter aufräumen
+                print("\n🧹 System-Wartung...")
+                cleanup_csv('sensor_data.csv', CONFIG['CSV_MAX_LINES'])
+                gc.collect()
+                print(f"✅ Garbage Collection durchgeführt - Free RAM: {gc.mem_free():,}")
+                
         except Exception as e:
-            print("Fehler in sensor_loop:", e)
-        time.sleep(10)
+            log_error("sensor_loop", str(e))
+            
+        time.sleep(CONFIG['SENSOR_READ_INTERVAL'])
 
-server = start_server()
-_thread.start_new_thread(sensor_loop, ())
-handle_requests(server)
+def main():
+    global wifi, sensors, sensor_data
+    
+    print("ESP32-S3 FireBeetle 2 Sensor Station")
+    print("=====================================")
+    
+    # Watchdog
+    wdt = WDT(timeout=30000)
+    
+    # Status LED
+    status_led = Pin(CONFIG['LED_PIN'], Pin.OUT)
+    status_led.on()
+    
+    # WiFi
+    wifi = WiFiManager(SSID, PASSWORD)
+    if not wifi.connect():
+        print("WiFi fehlgeschlagen - Neustart...")
+        time.sleep(5)
+        reset()
+    
+    status_led.off()
+    time.sleep(0.5)
+    status_led.on()
+    
+    # Zeit
+    sync_time()
+    
+    # I2C und Sensoren initialisieren
+    try:
+        i2c = I2C(0, scl=Pin(CONFIG['I2C_SCL_PIN']), sda=Pin(CONFIG['I2C_SDA_PIN']), 
+                  freq=CONFIG['I2C_FREQ'])
+        print(f"I2C initialisiert: SCL={CONFIG['I2C_SCL_PIN']}, SDA={CONFIG['I2C_SDA_PIN']}")
+        
+        # Teste I2C-Scan
+        devices = i2c.scan()
+        print(f"I2C Geräte gefunden: {[hex(d) for d in devices]}")
+        
+        mux = I2CMultiplexer(i2c)
+        sensors = SensorManager(mux)
+        sensors.init_sensors()
+        
+    except Exception as e:
+        log_error("I2C Setup", str(e))
+        reset()
+    
+    status_led.off()
+    
+    # CSV Header mit VPD
+    try:
+        with open('sensor_data.csv', 'r') as f:
+            pass
+    except:
+        with open('sensor_data.csv', 'w') as f:
+            f.write("date,temp,pressure,humidity,gas,co2,tvoc,lux,vpd\n")
+    
+    # Sensor-Thread
+    _thread.start_new_thread(sensor_loop, ())
+    
+    # Webserver
+    server = WebServer()
+    s = server.start()
+    
+    print("System bereit!")
+    
+    # Hauptschleife
+    while True:
+        try:
+            wdt.feed()
+            
+            # WiFi-Überwachung
+            if not wifi.is_connected():
+                print("WiFi-Verbindung verloren - Neuverbindung...")
+                wifi.connect()
+            
+            client, addr = s.accept()
+            client.settimeout(3.0)  # Timeout für langsame Clients
+            
+            request = client.recv(1024).decode()
+            
+            if request:
+                path = request.split(" ")[1] if len(request.split(" ")) > 1 else "/"
+                server.handle(client, path, sensor_data)
+            else:
+                client.close()
+                
+        except OSError as e:
+            # Socket-Timeout ist normal
+            pass
+        except Exception as e:
+            log_error("main", str(e))
+            try:
+                client.close()
+            except:
+                pass
 
-
+if __name__ == "__main__":
+    main()
