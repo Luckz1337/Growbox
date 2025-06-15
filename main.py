@@ -1,4 +1,4 @@
-from machine import Pin, I2C, reset, WDT
+from machine import Pin, I2C, reset, WDT, ADC
 from libraries import bme680
 from libraries import CCS811
 from libraries import bh1750
@@ -26,6 +26,13 @@ CONFIG = {
     'MAX_RETRIES': 3,
     'CSV_MAX_LINES': 500,
     'MEMORY_THRESHOLD': 50000,  # ESP32-S3 hat mehr RAM
+    # Bodenfeuchtigkeitssensor Konfiguration
+    'MOISTURE_SENSOR1_PIN': 4,   # A0/GPIO4
+    'MOISTURE_SENSOR2_PIN': 5,   # A1/GPIO5
+    'MOISTURE_AIR_RAW1': 3131,   # Sensor1 trocken (Luft)
+    'MOISTURE_WATER_RAW1': 1500, # Sensor1 nass (Wasser)
+    'MOISTURE_AIR_RAW2': 3131,   # Sensor2 trocken (Luft)
+    'MOISTURE_WATER_RAW2': 1500, # Sensor2 nass (Wasser)
 }
 
 # Vereinfachte Error-Klasse
@@ -106,6 +113,20 @@ def get_vpd_status(vpd):
     else:
         return "critical"
 
+def get_moisture_status(moisture_pct):
+    """
+    Bewertet den Bodenfeuchtigkeitswert
+    
+    Returns:
+        Status string: "optimal", "warning", "critical"
+    """
+    if 40 <= moisture_pct <= 60:
+        return "optimal"
+    elif 20 <= moisture_pct <= 80:
+        return "warning"
+    else:
+        return "critical"
+
 class WiFiManager:
     def __init__(self, ssid, password):
         self.ssid = ssid
@@ -164,6 +185,48 @@ class I2CMultiplexer:
             except Exception as e:
                 log_error("I2C Mux", f"Kanal {ch}: {str(e)}")
 
+class MoistureSensor:
+    """Klasse für Bodenfeuchtigkeitssensoren"""
+    def __init__(self, pin1, pin2, air_raw1, water_raw1, air_raw2, water_raw2):
+        self.adc1 = ADC(Pin(pin1))
+        self.adc2 = ADC(Pin(pin2))
+        
+        # ADC Konfiguration
+        for adc in (self.adc1, self.adc2):
+            adc.atten(ADC.ATTN_11DB)    # bis ~3,6 V
+            adc.width(ADC.WIDTH_12BIT)  # 0–4095
+        
+        # Kalibrierwerte
+        self.air_raw1 = air_raw1
+        self.water_raw1 = water_raw1
+        self.air_raw2 = air_raw2
+        self.water_raw2 = water_raw2
+    
+    def calc_pct(self, raw, air, water):
+        """Berechnet Prozent aus Rohwert"""
+        pct = (air - raw) * 100 / (air - water)
+        if pct < 0:
+            return 0
+        if pct > 100:
+            return 100
+        return pct
+    
+    def read(self):
+        """Liest beide Sensoren und gibt Werte zurück"""
+        raw1 = self.adc1.read()
+        raw2 = self.adc2.read()
+        
+        pct1 = self.calc_pct(raw1, self.air_raw1, self.water_raw1)
+        pct2 = self.calc_pct(raw2, self.air_raw2, self.water_raw2)
+        
+        return {
+            'raw1': raw1,
+            'raw2': raw2,
+            'pct1': round(pct1, 1),
+            'pct2': round(pct2, 1),
+            'avg': round((pct1 + pct2) / 2, 1)
+        }
+
 class SensorManager:
     def __init__(self, mux):
         self.mux = mux
@@ -206,6 +269,23 @@ class SensorManager:
             self.status_led.off()
         except Exception as e:
             log_error("BH1750 init", str(e))
+        
+        # Bodenfeuchtigkeitssensor
+        try:
+            self.sensors['moisture'] = MoistureSensor(
+                CONFIG['MOISTURE_SENSOR1_PIN'],
+                CONFIG['MOISTURE_SENSOR2_PIN'],
+                CONFIG['MOISTURE_AIR_RAW1'],
+                CONFIG['MOISTURE_WATER_RAW1'],
+                CONFIG['MOISTURE_AIR_RAW2'],
+                CONFIG['MOISTURE_WATER_RAW2']
+            )
+            print("Bodenfeuchtigkeitssensoren initialisiert")
+            self.status_led.on()
+            time.sleep(0.1)
+            self.status_led.off()
+        except Exception as e:
+            log_error("Moisture init", str(e))
 
     def read_all(self):
         data = {}
@@ -266,13 +346,34 @@ class SensorManager:
                 data['lux'] = self.last.get('bh1750', 0)
         else:
             data['lux'] = 0
+        
+        # Bodenfeuchtigkeitssensor
+        if 'moisture' in self.sensors:
+            try:
+                moisture_data = self.sensors['moisture'].read()
+                data['moisture1'] = moisture_data['pct1']
+                data['moisture2'] = moisture_data['pct2']
+                data['moisture_avg'] = moisture_data['avg']
+                data['moisture_status'] = get_moisture_status(moisture_data['avg'])
+                self.last['moisture'] = (data['moisture1'], data['moisture2'], data['moisture_avg'])
+            except Exception as e:
+                log_error("Moisture read", str(e))
+                if 'moisture' in self.last:
+                    data['moisture1'], data['moisture2'], data['moisture_avg'] = self.last['moisture']
+                    data['moisture_status'] = get_moisture_status(data['moisture_avg'])
+                else:
+                    data['moisture1'] = data['moisture2'] = data['moisture_avg'] = 0
+                    data['moisture_status'] = "unknown"
+        else:
+            data['moisture1'] = data['moisture2'] = data['moisture_avg'] = 0
+            data['moisture_status'] = "unknown"
             
         return data
 
 def write_csv(date, data):
     try:
         with open('sensor_data.csv', 'a') as f:
-            f.write(f"{date},{data['temp']},{data['pres']},{data['hum']},{data['gas']},{data['co2']},{data['tvoc']},{data['lux']},{data['vpd']}\n")
+            f.write(f"{date},{data['temp']},{data['pres']},{data['hum']},{data['gas']},{data['co2']},{data['tvoc']},{data['lux']},{data['vpd']},{data['moisture1']},{data['moisture2']},{data['moisture_avg']}\n")
     except Exception as e:
         log_error("CSV write", str(e))
 
@@ -356,7 +457,7 @@ class WebServer:
                 # Nur die letzten 50 (ESP32-S3 kann mehr)
                 for line in lines[-50:]:
                     parts = line.strip().split(",")
-                    if len(parts) >= 8:  # Mindestens 8 Felder (vpd ist optional für alte Daten)
+                    if len(parts) >= 8:  # Mindestens 8 Felder (kompatibel mit alten Daten)
                         try:
                             entry = {
                                 "date": parts[0],
@@ -375,6 +476,16 @@ class WebServer:
                             else:
                                 # Berechne VPD für alte Daten
                                 entry["vpd"] = calculate_vpd(entry["bme680_temp"], entry["bme680_humidity"])
+                            
+                            # Bodenfeuchtigkeit hinzufügen wenn vorhanden
+                            if len(parts) > 11:
+                                entry["moisture1"] = float(parts[9])
+                                entry["moisture2"] = float(parts[10])
+                                entry["moisture_avg"] = float(parts[11])
+                            else:
+                                entry["moisture1"] = 0
+                                entry["moisture2"] = 0
+                                entry["moisture_avg"] = 0
                             
                             if not first:
                                 client.send(b"1\r\n,\r\n")
@@ -517,7 +628,11 @@ def sensor_loop():
                 "ccs811_tvoc": data['tvoc'],
                 "bh1750_lux": data['lux'],
                 "vpd": data['vpd'],
-                "vpd_status": data['vpd_status']
+                "vpd_status": data['vpd_status'],
+                "moisture_sensor1": data['moisture1'],
+                "moisture_sensor2": data['moisture2'],
+                "moisture_average": data['moisture_avg'],
+                "moisture_status": data['moisture_status']
             }
             
             # CSV schreiben
@@ -535,6 +650,9 @@ def sensor_loop():
             print(f"🏭 CCS811 CO2:           {data['co2']} ppm")
             print(f"🌫️  CCS811 TVOC:          {data['tvoc']} ppb")
             print(f"💡 BH1750 Helligkeit:    {data['lux']:.1f} lux")
+            print(f"🌱 Bodenfeuchtigkeit S1:  {data['moisture1']:.1f} %")
+            print(f"🌱 Bodenfeuchtigkeit S2:  {data['moisture2']:.1f} %")
+            print(f"🌱 Bodenfeuchtigkeit Ø:   {data['moisture_avg']:.1f} % ({data['moisture_status']})")
             
             # System-Metriken alle 5 Zyklen
             counter += 1
@@ -646,13 +764,13 @@ def main():
     
     status_led.off()
     
-    # CSV Header mit VPD
+    # CSV Header mit VPD und Bodenfeuchtigkeit
     try:
         with open('sensor_data.csv', 'r') as f:
             pass
     except:
         with open('sensor_data.csv', 'w') as f:
-            f.write("date,temp,pressure,humidity,gas,co2,tvoc,lux,vpd\n")
+            f.write("date,temp,pressure,humidity,gas,co2,tvoc,lux,vpd,moisture1,moisture2,moisture_avg\n")
     
     # Sensor-Thread
     _thread.start_new_thread(sensor_loop, ())
