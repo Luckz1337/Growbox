@@ -112,7 +112,7 @@
             color: #2b6cb0;
         }
         
-        .vpd-status {
+        .vpd-status, .moisture-status {
             display: inline-block;
             padding: 2px 8px;
             border-radius: 4px;
@@ -120,9 +120,9 @@
             margin-left: 8px;
         }
         
-        .vpd-optimal { background: #c6f6d5; color: #22543d; }
-        .vpd-warning { background: #fed7aa; color: #7c2d12; }
-        .vpd-critical { background: #fed7d7; color: #742a2a; }
+        .vpd-optimal, .moisture-optimal { background: #c6f6d5; color: #22543d; }
+        .vpd-warning, .moisture-warning { background: #fed7aa; color: #7c2d12; }
+        .vpd-critical, .moisture-critical { background: #fed7d7; color: #742a2a; }
         
         .system-status {
             display: grid;
@@ -437,6 +437,26 @@
                                 <td class="sensor-value" id="light">--</td>
                                 <td>lux</td>
                             </tr>
+                            <!-- Bodenfeuchtigkeitssensoren -->
+                            <tr>
+                                <td rowspan="4">Bodenfeuchtigkeit</td>
+                                <td>Sensor 1</td>
+                                <td class="sensor-value" id="moisture1">--</td>
+                                <td>%</td>
+                            </tr>
+                            <tr>
+                                <td>Sensor 2</td>
+                                <td class="sensor-value" id="moisture2">--</td>
+                                <td>%</td>
+                            </tr>
+                            <tr>
+                                <td>Durchschnitt</td>
+                                <td>
+                                    <span class="sensor-value" id="moistureAvg">--</span>
+                                    <span class="moisture-status" id="moistureStatus"></span>
+                                </td>
+                                <td>%</td>
+                            </tr>
                         </tbody>
                     </table>
                 </div>
@@ -534,6 +554,13 @@
                 <div class="card-title">📊 Lichtstärke Verlauf</div>
                 <div class="chart-container">
                     <canvas id="lightChart"></canvas>
+                </div>
+            </div>
+            
+            <div class="card chart-card">
+                <div class="card-title">🌱 Bodenfeuchtigkeit Verlauf</div>
+                <div class="chart-container">
+                    <canvas id="moistureChart"></canvas>
                 </div>
             </div>
         </div>
@@ -719,6 +746,73 @@
             }
         });
         
+        // Neues Chart für Bodenfeuchtigkeit
+        const moistureChart = new Chart(document.getElementById('moistureChart'), {
+            type: 'line',
+            data: {
+                labels: [],
+                datasets: [{
+                    label: 'Sensor 1 (%)',
+                    data: [],
+                    borderColor: '#68d391',
+                    backgroundColor: 'rgba(104, 211, 145, 0.1)',
+                    tension: 0.4
+                }, {
+                    label: 'Sensor 2 (%)',
+                    data: [],
+                    borderColor: '#38a169',
+                    backgroundColor: 'rgba(56, 161, 105, 0.1)',
+                    tension: 0.4
+                }, {
+                    label: 'Durchschnitt (%)',
+                    data: [],
+                    borderColor: '#22543d',
+                    backgroundColor: 'rgba(34, 84, 61, 0.1)',
+                    tension: 0.4,
+                    borderWidth: 3
+                }]
+            },
+            options: {
+                responsive: true,
+                maintainAspectRatio: false,
+                interaction: {
+                    mode: 'index',
+                    intersect: false,
+                },
+                scales: {
+                    x: {
+                        display: true,
+                        title: { display: true, text: 'Zeit' }
+                    },
+                    y: {
+                        display: true,
+                        title: { display: true, text: 'Bodenfeuchtigkeit (%)' },
+                        min: 0,
+                        max: 100
+                    }
+                },
+                plugins: {
+                    legend: {
+                        display: true,
+                        position: 'top',
+                    },
+                    tooltip: {
+                        callbacks: {
+                            afterLabel: function(context) {
+                                if (context.dataset.label === 'Durchschnitt (%)') {
+                                    const value = context.parsed.y;
+                                    if (value >= 40 && value <= 60) return 'Status: Optimal';
+                                    else if (value >= 20 && value <= 80) return 'Status: Akzeptabel';
+                                    else return 'Status: Kritisch';
+                                }
+                                return '';
+                            }
+                        }
+                    }
+                }
+            }
+        });
+        
         // VPD Berechnung
         function calculateVPD(temp, humidity) {
             // Sättigungsdampfdruck bei gegebener Temperatur (kPa)
@@ -737,6 +831,16 @@
                 return { text: "Akzeptabel", class: "vpd-warning" };
             } else {
                 return { text: "Kritisch", class: "vpd-critical" };
+            }
+        }
+        
+        function getMoistureStatus(moisture) {
+            if (moisture >= 40 && moisture <= 60) {
+                return { text: "Optimal", class: "moisture-optimal" };
+            } else if (moisture >= 20 && moisture <= 80) {
+                return { text: "Akzeptabel", class: "moisture-warning" };
+            } else {
+                return { text: "Kritisch", class: "moisture-critical" };
             }
         }
         
@@ -867,6 +971,21 @@
             document.getElementById('light').textContent = 
                 data.bh1750_lux ? data.bh1750_lux.toFixed(1) : '--';
             
+            // Bodenfeuchtigkeit
+            document.getElementById('moisture1').textContent = 
+                data.moisture_sensor1 !== undefined ? data.moisture_sensor1.toFixed(1) : '--';
+            document.getElementById('moisture2').textContent = 
+                data.moisture_sensor2 !== undefined ? data.moisture_sensor2.toFixed(1) : '--';
+            document.getElementById('moistureAvg').textContent = 
+                data.moisture_average !== undefined ? data.moisture_average.toFixed(1) : '--';
+            
+            if (data.moisture_average !== undefined) {
+                const moistureStatus = getMoistureStatus(data.moisture_average);
+                const statusEl = document.getElementById('moistureStatus');
+                statusEl.textContent = moistureStatus.text;
+                statusEl.className = 'moisture-status ' + moistureStatus.class;
+            }
+            
             // Zeitstempel
             document.getElementById('lastReading').textContent = 
                 data.date ? data.date.split('-')[1] : '--';
@@ -965,6 +1084,13 @@
             lightChart.data.labels = labels;
             lightChart.data.datasets[0].data = recentData.map(d => d.bh1750_lux);
             lightChart.update();
+            
+            // Bodenfeuchtigkeit Chart
+            moistureChart.data.labels = labels;
+            moistureChart.data.datasets[0].data = recentData.map(d => d.moisture1 || 0);
+            moistureChart.data.datasets[1].data = recentData.map(d => d.moisture2 || 0);
+            moistureChart.data.datasets[2].data = recentData.map(d => d.moisture_avg || 0);
+            moistureChart.update();
         }
         
         function startAutoUpdate() {
@@ -1019,4 +1145,3 @@
     </script>
 </body>
 </html>
-
