@@ -3,7 +3,7 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>ESP32-S3 Sensor Dashboard</title>
+    <title>ESP32-S3 Sensor Dashboard mit Zeitplanung</title>
     <script src="https://cdnjs.cloudflare.com/ajax/libs/Chart.js/3.9.1/chart.min.js"></script>
     <style>
         body {
@@ -66,6 +66,7 @@
             backdrop-filter: blur(10px);
             border: 1px solid rgba(255,255,255,0.2);
             transition: transform 0.3s ease, box-shadow 0.3s ease;
+            margin-bottom: 20px;
         }
         
         .card:hover {
@@ -233,7 +234,8 @@
             cursor: pointer;
             font-weight: 600;
             transition: all 0.3s ease;
-            margin: 0 5px;
+            margin: 5px;
+            font-size: 0.9em;
         }
         
         .btn:hover {
@@ -263,6 +265,11 @@
         
         .btn-success:hover {
             box-shadow: 0 4px 12px rgba(16, 185, 129, 0.4);
+        }
+        
+        .btn-small {
+            padding: 6px 12px;
+            font-size: 0.8em;
         }
         
         .timestamp {
@@ -330,29 +337,196 @@
             flex-wrap: wrap;
         }
         
-        .fan-controls {
-            display: flex;
-            flex-direction: column;
-            gap: 20px;
-            margin-top: 15px;
+        /* Zeitplanung Styles */
+        .schedule-section {
+            margin-top: 30px;
         }
         
-        .fan-control {
-            display: flex;
-            align-items: center;
+        .schedule-form {
+            display: grid;
+            grid-template-columns: repeat(auto-fit, minmax(200px, 1fr));
             gap: 15px;
+            align-items: end;
+            margin-bottom: 20px;
+            padding: 20px;
+            background: #f7fafc;
+            border-radius: 10px;
+        }
+        
+        .form-group {
+            display: flex;
+            flex-direction: column;
+            gap: 5px;
+        }
+        
+        .form-group label {
+            font-weight: 600;
+            color: #4a5568;
+            font-size: 0.9em;
+        }
+        
+        .form-group input,
+        .form-group select {
+            padding: 8px 12px;
+            border: 2px solid #e2e8f0;
+            border-radius: 6px;
+            font-size: 0.9em;
+            transition: border-color 0.3s ease;
+        }
+        
+        .form-group input:focus,
+        .form-group select:focus {
+            outline: none;
+            border-color: #4299e1;
+            box-shadow: 0 0 0 3px rgba(66, 153, 225, 0.1);
+        }
+        
+        .time-input {
+            display: flex;
+            gap: 5px;
+            align-items: center;
+        }
+        
+        .time-input input {
+            width: 60px;
+            text-align: center;
+        }
+        
+        .weekday-selector {
+            display: flex;
+            gap: 5px;
             flex-wrap: wrap;
         }
         
-        .fan-label {
+        .weekday-btn {
+            padding: 6px 12px;
+            border: 2px solid #e2e8f0;
+            background: white;
+            border-radius: 6px;
+            cursor: pointer;
+            font-size: 0.8em;
             font-weight: 600;
-            color: #4a5568;
-            min-width: 180px;
+            transition: all 0.3s ease;
+            min-width: 40px;
+            text-align: center;
         }
         
-        .fan-slider {
+        .weekday-btn.active {
+            background: #4299e1;
+            color: white;
+            border-color: #3182ce;
+        }
+        
+        .weekday-btn:hover {
+            border-color: #4299e1;
+            background: #ebf4ff;
+        }
+        
+        .schedule-list {
+            margin-top: 20px;
+        }
+        
+        .schedule-item {
+            display: flex;
+            align-items: center;
+            justify-content: space-between;
+            padding: 15px;
+            background: #f7fafc;
+            border-radius: 10px;
+            margin-bottom: 10px;
+            border-left: 4px solid #4299e1;
+            transition: all 0.3s ease;
+        }
+        
+        .schedule-item.disabled {
+            opacity: 0.6;
+            border-left-color: #a0aec0;
+        }
+        
+        .schedule-item:hover {
+            background: #edf2f7;
+            transform: translateX(5px);
+        }
+        
+        .schedule-info {
             flex: 1;
-            min-width: 200px;
+            display: grid;
+            grid-template-columns: 2fr 1fr 1fr;
+            gap: 15px;
+            align-items: center;
+        }
+        
+        .schedule-name {
+            font-weight: bold;
+            color: #2d3748;
+            font-size: 1.1em;
+        }
+        
+        .schedule-time {
+            color: #4a5568;
+            font-family: monospace;
+            font-weight: 600;
+        }
+        
+        .schedule-fans {
+            color: #4a5568;
+            font-size: 0.9em;
+        }
+        
+        .schedule-actions {
+            display: flex;
+            gap: 5px;
+            align-items: center;
+        }
+        
+        .status-active {
+            background: #48bb78;
+            animation: pulse 2s infinite;
+        }
+        
+        .status-inactive {
+            background: #a0aec0;
+        }
+        
+        .current-schedule {
+            background: linear-gradient(135deg, #c6f6d5, #9ae6b4);
+            border-left-color: #38a169;
+            font-weight: bold;
+        }
+        
+        .tabs {
+            display: flex;
+            gap: 10px;
+            margin-bottom: 20px;
+            border-bottom: 2px solid #e2e8f0;
+        }
+        
+        .tab {
+            padding: 10px 20px;
+            background: transparent;
+            border: none;
+            cursor: pointer;
+            font-weight: 600;
+            color: #718096;
+            border-bottom: 3px solid transparent;
+            transition: all 0.3s ease;
+        }
+        
+        .tab.active {
+            color: #4299e1;
+            border-bottom-color: #4299e1;
+        }
+        
+        .tab-content {
+            display: none;
+        }
+        
+        .tab-content.active {
+            display: block;
+        }
+        
+        .range-slider {
+            width: 100%;
             height: 6px;
             background: #e2e8f0;
             border-radius: 3px;
@@ -360,45 +534,22 @@
             -webkit-appearance: none;
         }
         
-        .fan-slider::-webkit-slider-thumb {
+        .range-slider::-webkit-slider-thumb {
             -webkit-appearance: none;
             appearance: none;
             width: 20px;
             height: 20px;
-            background: #48bb78;
+            background: #4299e1;
             cursor: pointer;
             border-radius: 50%;
             box-shadow: 0 2px 6px rgba(0,0,0,0.2);
         }
         
-        .fan-value {
-            font-weight: bold;
-            color: #2d3748;
-            min-width: 50px;
+        .no-schedule {
             text-align: center;
-        }
-        
-        .btn-small {
-            padding: 6px 12px;
-            font-size: 0.9em;
-        }
-        
-        .fan-presets {
-            display: flex;
-            gap: 10px;
-            margin-top: 10px;
-            flex-wrap: wrap;
-            justify-content: center;
-        }
-        
-        .btn-preset {
-            background: linear-gradient(135deg, #718096, #4a5568);
-            padding: 8px 16px;
-            font-size: 0.9em;
-        }
-        
-        .btn-preset:hover {
-            background: linear-gradient(135deg, #4a5568, #2d3748);
+            color: #718096;
+            padding: 40px;
+            font-style: italic;
         }
         
         @media (max-width: 1200px) {
@@ -432,6 +583,21 @@
                 flex-direction: column;
                 align-items: stretch;
             }
+            
+            .schedule-form {
+                grid-template-columns: 1fr;
+            }
+            
+            .schedule-info {
+                grid-template-columns: 1fr;
+                gap: 10px;
+            }
+            
+            .schedule-item {
+                flex-direction: column;
+                align-items: stretch;
+                gap: 15px;
+            }
         }
     </style>
 </head>
@@ -441,7 +607,7 @@
     <div class="container">
         <div class="header">
             <h1>🚀 ESP32-S3 FireBeetle Dashboard</h1>
-            <p>Smart Sensor Monitoring System</p>
+            <p>Smart Sensor Monitoring System mit Zeitplanung</p>
         </div>
         
         <div class="controls">
@@ -461,30 +627,177 @@
             </div>
         </div>
         
-        <!-- Ventilator-Steuerung -->
-        <div class="controls" style="margin-top: 20px;">
-            <div class="card-title">🌀 Ventilator-Steuerung</div>
-            <div class="fan-controls">
-                <div class="fan-control">
-                    <label class="fan-label">🌀 Umluft-Ventilator:</label>
-                    <input type="range" class="fan-slider" id="umluftSlider" 
-                           min="0" max="100" value="0" step="5">
-                    <span class="fan-value" id="umluftValue">0%</span>
-                    <button class="btn btn-small" onclick="setFanSpeed('umluft')">Setzen</button>
+        <!-- Ventilator-Steuerung mit Zeitplanung -->
+        <div class="card">
+            <div class="card-title">🕒 Ventilator-Zeitplanung & Steuerung</div>
+            
+            <!-- Tabs -->
+            <div class="tabs">
+                <button class="tab active" onclick="switchTab('manual')">Manuelle Steuerung</button>
+                <button class="tab" onclick="switchTab('schedule')">Zeitplan verwalten</button>
+                <button class="tab" onclick="switchTab('current')">Aktuelle Einstellungen</button>
+            </div>
+            
+            <!-- Manuelle Steuerung Tab -->
+            <div id="manual-tab" class="tab-content active">
+                <div class="schedule-form">
+                    <div class="form-group">
+                        <label>🌀 Umluft-Ventilator</label>
+                        <input type="range" class="range-slider" id="umluftSlider" 
+                               min="0" max="100" value="0" step="5" 
+                               oninput="updateSliderValue('umluft', this.value)">
+                        <span id="umluftValue">0%</span>
+                    </div>
+                    
+                    <div class="form-group">
+                        <label>💨 Abluft-Ventilator</label>
+                        <input type="range" class="range-slider" id="abluftSlider" 
+                               min="0" max="100" value="0" step="5"
+                               oninput="updateSliderValue('abluft', this.value)">
+                        <span id="abluftValue">0%</span>
+                    </div>
+                    
+                    <div class="form-group">
+                        <label>&nbsp;</label>
+                        <button class="btn btn-success" onclick="applyManualSettings()">
+                            ✅ Einstellungen übernehmen
+                        </button>
+                    </div>
                 </div>
-                <div class="fan-control">
-                    <label class="fan-label">💨 Abluft-Ventilator:</label>
-                    <input type="range" class="fan-slider" id="abluftSlider" 
-                           min="0" max="100" value="0" step="5">
-                    <span class="fan-value" id="abluftValue">0%</span>
-                    <button class="btn btn-small" onclick="setFanSpeed('abluft')">Setzen</button>
+                
+                <!-- Presets -->
+                <div style="display: flex; gap: 10px; flex-wrap: wrap; justify-content: center; margin-top: 20px;">
+                    <button class="btn" onclick="setPreset(0, 0)">🔴 Aus</button>
+                    <button class="btn" onclick="setPreset(20, 20)">🟡 Niedrig</button>
+                    <button class="btn" onclick="setPreset(50, 50)">🟠 Mittel</button>
+                    <button class="btn" onclick="setPreset(80, 80)">🟢 Hoch</button>
+                    <button class="btn" onclick="setPreset(100, 100)">🔵 Maximum</button>
                 </div>
-                <div class="fan-presets">
-                    <button class="btn btn-preset" onclick="setPreset(0, 0)">🔴 Aus</button>
-                    <button class="btn btn-preset" onclick="setPreset(20, 20)">🟡 Niedrig</button>
-                    <button class="btn btn-preset" onclick="setPreset(50, 50)">🟠 Mittel</button>
-                    <button class="btn btn-preset" onclick="setPreset(80, 80)">🟢 Hoch</button>
-                    <button class="btn btn-preset" onclick="setPreset(100, 100)">🔵 Max</button>
+            </div>
+            
+            <!-- Zeitplan Tab -->
+            <div id="schedule-tab" class="tab-content">
+                <div class="schedule-form">
+                    <div class="form-group">
+                        <label>📝 Name der Regel</label>
+                        <input type="text" id="ruleName" placeholder="z.B. Morgen-Lüftung" maxlength="30">
+                    </div>
+                    
+                    <div class="form-group">
+                        <label>🕐 Startzeit</label>
+                        <div class="time-input">
+                            <input type="number" id="startHour" min="0" max="23" value="8" placeholder="HH">
+                            <span>:</span>
+                            <input type="number" id="startMinute" min="0" max="59" value="0" placeholder="MM">
+                        </div>
+                    </div>
+                    
+                    <div class="form-group">
+                        <label>🕐 Endzeit</label>
+                        <div class="time-input">
+                            <input type="number" id="endHour" min="0" max="23" value="18" placeholder="HH">
+                            <span>:</span>
+                            <input type="number" id="endMinute" min="0" max="59" value="0" placeholder="MM">
+                        </div>
+                    </div>
+                    
+                    <div class="form-group">
+                        <label>🌀 Umluft (%)</label>
+                        <input type="range" class="range-slider" id="scheduleUmluft" 
+                               min="0" max="100" value="50" step="5"
+                               oninput="updateSliderValue('scheduleUmluft', this.value)">
+                        <span id="scheduleUmluftValue">50%</span>
+                    </div>
+                    
+                    <div class="form-group">
+                        <label>💨 Abluft (%)</label>
+                        <input type="range" class="range-slider" id="scheduleAbluft" 
+                               min="0" max="100" value="50" step="5"
+                               oninput="updateSliderValue('scheduleAbluft', this.value)">
+                        <span id="scheduleAbluftValue">50%</span>
+                    </div>
+                    
+                    <div class="form-group">
+                        <label>📅 Wochentage</label>
+                        <div class="weekday-selector">
+                            <div class="weekday-btn" data-day="0" onclick="toggleWeekday(0)">Mo</div>
+                            <div class="weekday-btn" data-day="1" onclick="toggleWeekday(1)">Di</div>
+                            <div class="weekday-btn" data-day="2" onclick="toggleWeekday(2)">Mi</div>
+                            <div class="weekday-btn" data-day="3" onclick="toggleWeekday(3)">Do</div>
+                            <div class="weekday-btn" data-day="4" onclick="toggleWeekday(4)">Fr</div>
+                            <div class="weekday-btn" data-day="5" onclick="toggleWeekday(5)">Sa</div>
+                            <div class="weekday-btn" data-day="6" onclick="toggleWeekday(6)">So</div>
+                        </div>
+                        <div style="margin-top: 5px;">
+                            <button class="btn btn-small" onclick="selectAllWeekdays()">Alle</button>
+                            <button class="btn btn-small" onclick="selectWorkdays()">Mo-Fr</button>
+                            <button class="btn btn-small" onclick="selectWeekend()">Sa-So</button>
+                            <button class="btn btn-small" onclick="clearWeekdays()">Keine</button>
+                        </div>
+                    </div>
+                    
+                    <div class="form-group">
+                        <label>&nbsp;</label>
+                        <button class="btn btn-success" onclick="addScheduleRule()">
+                            ➕ Regel hinzufügen
+                        </button>
+                    </div>
+                </div>
+                
+                <!-- Zeitplan-Liste -->
+                <div class="schedule-list">
+                    <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 15px;">
+                        <h3 style="margin: 0; color: #4a5568;">📋 Aktive Zeitplan-Regeln</h3>
+                        <button class="btn btn-danger btn-small" onclick="clearAllSchedules()">
+                            🗑️ Alle löschen
+                        </button>
+                    </div>
+                    <div id="scheduleList">
+                        <div class="no-schedule">
+                            Keine Zeitplan-Regeln vorhanden.<br>
+                            Erstellen Sie Ihre erste Regel oben.
+                        </div>
+                    </div>
+                </div>
+            </div>
+            
+            <!-- Aktuelle Einstellungen Tab -->
+            <div id="current-tab" class="tab-content">
+                <div class="schedule-form">
+                    <div class="form-group">
+                        <label>🌀 Umluft-Ventilator</label>
+                        <div style="font-size: 1.2em; font-weight: bold; color: #2d3748;" id="currentUmluft">-- %</div>
+                    </div>
+                    
+                    <div class="form-group">
+                        <label>💨 Abluft-Ventilator</label>
+                        <div style="font-size: 1.2em; font-weight: bold; color: #2d3748;" id="currentAbluft">-- %</div>
+                    </div>
+                    
+                    <div class="form-group">
+                        <label>🕒 Letzte Änderung</label>
+                        <div style="font-size: 0.9em; color: #718096;" id="lastChange">--</div>
+                    </div>
+                    
+                    <div class="form-group">
+                        <label>📋 Aktive Regel</label>
+                        <div style="font-size: 0.9em; color: #718096;" id="activeRule">Manuelle Steuerung</div>
+                    </div>
+                </div>
+                
+                <div style="margin-top: 20px; padding: 15px; background: #f7fafc; border-radius: 10px;">
+                    <h4 style="margin: 0 0 10px 0; color: #4a5568;">⚡ Schnellaktionen</h4>
+                    <div style="display: flex; gap: 10px; flex-wrap: wrap;">
+                        <button class="btn btn-success" onclick="refreshCurrentSettings()">
+                            🔄 Aktualisieren
+                        </button>
+                        <button class="btn btn-warning" onclick="testFans()">
+                            🧪 Ventilatoren testen
+                        </button>
+                        <button class="btn btn-danger" onclick="emergencyStop()">
+                            🚨 Notaus
+                        </button>
+                    </div>
                 </div>
             </div>
         </div>
@@ -556,7 +869,7 @@
                             </tr>
                             <!-- Bodenfeuchtigkeitssensoren -->
                             <tr>
-                                <td rowspan="4">Bodenfeuchtigkeit</td>
+                                <td rowspan="3">Bodenfeuchtigkeit</td>
                                 <td>Sensor 1</td>
                                 <td class="sensor-value" id="moisture1">--</td>
                                 <td>%</td>
@@ -705,6 +1018,8 @@
         let connectionStatus = document.getElementById('connectionStatus');
         let isOnline = false;
         let historicalData = [];
+        let selectedWeekdays = [];
+        let currentSchedule = [];
         
         // Chart.js Konfiguration
         Chart.defaults.color = '#4a5568';
@@ -988,74 +1303,347 @@
             }
         });
         
-        // Ventilator-Steuerung
-        const umluftSlider = document.getElementById('umluftSlider');
-        const umluftValueDisplay = document.getElementById('umluftValue');
-        const abluftSlider = document.getElementById('abluftSlider');
-        const abluftValueDisplay = document.getElementById('abluftValue');
-        
-        umluftSlider.addEventListener('input', function() {
-            umluftValueDisplay.textContent = this.value + '%';
-        });
-        
-        abluftSlider.addEventListener('input', function() {
-            abluftValueDisplay.textContent = this.value + '%';
-        });
-        
-        function setFanSpeed(fanType) {
-            const value = fanType === 'umluft' ? umluftSlider.value : abluftSlider.value;
-            const params = `${fanType}=${value}`;
+        // Tab-Switching
+        function switchTab(tabName) {
+            // Alle Tabs deaktivieren
+            document.querySelectorAll('.tab').forEach(tab => tab.classList.remove('active'));
+            document.querySelectorAll('.tab-content').forEach(content => content.classList.remove('active'));
             
-            fetch(`/api/fans/set?${params}`)
-                .then(response => response.json())
-                .then(data => {
-                    if (data.status === 'success') {
-                        console.log(`${fanType} auf ${value}% gesetzt`);
-                        updateFanDisplay(data.speeds);
-                    } else {
-                        alert(`Fehler beim Setzen der Ventilatorgeschwindigkeit: ${data.error}`);
-                    }
-                })
-                .catch(error => {
-                    console.error('Fehler:', error);
-                    alert('Fehler bei der Kommunikation mit dem ESP32');
-                });
+            // Aktiven Tab aktivieren
+            document.querySelector(`[onclick="switchTab('${tabName}')"]`).classList.add('active');
+            document.getElementById(`${tabName}-tab`).classList.add('active');
+            
+            // Bei Current-Tab Daten laden
+            if (tabName === 'current') {
+                refreshCurrentSettings();
+            } else if (tabName === 'schedule') {
+                loadSchedule();
+            }
         }
         
-        function setPreset(umluft, abluft) {
-            umluftSlider.value = umluft;
-            abluftSlider.value = abluft;
-            umluftValueDisplay.textContent = umluft + '%';
-            abluftValueDisplay.textContent = abluft + '%';
+        // Slider-Werte aktualisieren
+        function updateSliderValue(type, value) {
+            document.getElementById(type + 'Value').textContent = value + '%';
+        }
+        
+        // Wochentag-Auswahl
+        function toggleWeekday(day) {
+            const btn = document.querySelector(`[data-day="${day}"]`);
+            const index = selectedWeekdays.indexOf(day);
+            
+            if (index > -1) {
+                selectedWeekdays.splice(index, 1);
+                btn.classList.remove('active');
+            } else {
+                selectedWeekdays.push(day);
+                btn.classList.add('active');
+            }
+        }
+        
+        function selectAllWeekdays() {
+            selectedWeekdays = [0, 1, 2, 3, 4, 5, 6];
+            updateWeekdayButtons();
+        }
+        
+        function selectWorkdays() {
+            selectedWeekdays = [0, 1, 2, 3, 4];
+            updateWeekdayButtons();
+        }
+        
+        function selectWeekend() {
+            selectedWeekdays = [5, 6];
+            updateWeekdayButtons();
+        }
+        
+        function clearWeekdays() {
+            selectedWeekdays = [];
+            updateWeekdayButtons();
+        }
+        
+        function updateWeekdayButtons() {
+            document.querySelectorAll('.weekday-btn').forEach(btn => {
+                const day = parseInt(btn.dataset.day);
+                if (selectedWeekdays.includes(day)) {
+                    btn.classList.add('active');
+                } else {
+                    btn.classList.remove('active');
+                }
+            });
+        }
+        
+        // Manuelle Steuerung
+        function applyManualSettings() {
+            const umluft = document.getElementById('umluftSlider').value;
+            const abluft = document.getElementById('abluftSlider').value;
             
             fetch(`/api/fans/set?umluft=${umluft}&abluft=${abluft}`)
                 .then(response => response.json())
                 .then(data => {
                     if (data.status === 'success') {
-                        console.log(`Preset gesetzt: Umluft ${umluft}%, Abluft ${abluft}%`);
-                        updateFanDisplay(data.speeds);
+                        alert(`✅ Ventilatoren eingestellt:\nUmluft: ${umluft}%\nAbluft: ${abluft}%`);
+                        refreshCurrentSettings();
+                    } else {
+                        alert(`❌ Fehler: ${data.error}`);
                     }
                 })
-                .catch(error => console.error('Fehler:', error));
+                .catch(error => {
+                    console.error('Fehler:', error);
+                    alert('❌ Kommunikationsfehler mit ESP32');
+                });
         }
         
-        function fetchFanStatus() {
+        function setPreset(umluft, abluft) {
+            document.getElementById('umluftSlider').value = umluft;
+            document.getElementById('abluftSlider').value = abluft;
+            updateSliderValue('umluft', umluft);
+            updateSliderValue('abluft', abluft);
+            applyManualSettings();
+        }
+        
+        // Zeitplan-Funktionen
+        function addScheduleRule() {
+            const name = document.getElementById('ruleName').value.trim();
+            const startHour = document.getElementById('startHour').value;
+            const startMinute = document.getElementById('startMinute').value;
+            const endHour = document.getElementById('endHour').value;
+            const endMinute = document.getElementById('endMinute').value;
+            const umluft = document.getElementById('scheduleUmluft').value;
+            const abluft = document.getElementById('scheduleAbluft').value;
+            
+            // Validierung
+            if (!name) {
+                alert('❌ Bitte geben Sie einen Namen für die Regel ein!');
+                return;
+            }
+            
+            if (selectedWeekdays.length === 0) {
+                alert('❌ Bitte wählen Sie mindestens einen Wochentag aus!');
+                return;
+            }
+            
+            // Parameter zusammenstellen
+            const params = new URLSearchParams({
+                name: name,
+                start_hour: startHour,
+                start_minute: startMinute,
+                end_hour: endHour,
+                end_minute: endMinute,
+                umluft_speed: umluft,
+                abluft_speed: abluft,
+                weekdays: selectedWeekdays.join(','),
+                enabled: 'true'
+            });
+            
+            fetch(`/api/schedule/add?${params}`)
+                .then(response => response.json())
+                .then(data => {
+                    if (data.status === 'success') {
+                        alert(`✅ Zeitplan-Regel "${name}" hinzugefügt!`);
+                        clearScheduleForm();
+                        loadSchedule();
+                    } else {
+                        alert(`❌ Fehler: ${data.message}`);
+                    }
+                })
+                .catch(error => {
+                    console.error('Fehler:', error);
+                    alert('❌ Kommunikationsfehler mit ESP32');
+                });
+        }
+        
+        function clearScheduleForm() {
+            document.getElementById('ruleName').value = '';
+            document.getElementById('startHour').value = 8;
+            document.getElementById('startMinute').value = 0;
+            document.getElementById('endHour').value = 18;
+            document.getElementById('endMinute').value = 0;
+            document.getElementById('scheduleUmluft').value = 50;
+            document.getElementById('scheduleAbluft').value = 50;
+            updateSliderValue('scheduleUmluft', 50);
+            updateSliderValue('scheduleAbluft', 50);
+            clearWeekdays();
+        }
+        
+        function loadSchedule() {
+            fetch('/api/schedule')
+                .then(response => response.json())
+                .then(data => {
+                    currentSchedule = data.schedule || [];
+                    updateScheduleList();
+                })
+                .catch(error => {
+                    console.error('Fehler beim Laden des Zeitplans:', error);
+                });
+        }
+        
+        function updateScheduleList() {
+            const listElement = document.getElementById('scheduleList');
+            
+            if (currentSchedule.length === 0) {
+                listElement.innerHTML = `
+                    <div class="no-schedule">
+                        Keine Zeitplan-Regeln vorhanden.<br>
+                        Erstellen Sie Ihre erste Regel oben.
+                    </div>
+                `;
+                return;
+            }
+            
+            let html = '';
+            currentSchedule.forEach((rule, index) => {
+                const weekdayNames = ['Mo', 'Di', 'Mi', 'Do', 'Fr', 'Sa', 'So'];
+                const weekdaysText = rule.weekdays ? 
+                    rule.weekdays.map(d => weekdayNames[d]).join(', ') : 
+                    'Täglich';
+                
+                const timeText = `${String(rule.start_hour).padStart(2, '0')}:${String(rule.start_minute).padStart(2, '0')} - ${String(rule.end_hour).padStart(2, '0')}:${String(rule.end_minute).padStart(2, '0')}`;
+                const fansText = `Umluft: ${rule.umluft_speed}%, Abluft: ${rule.abluft_speed}%`;
+                
+                const isEnabled = rule.enabled !== false;
+                const statusClass = isEnabled ? 'status-active' : 'status-inactive';
+                const itemClass = isEnabled ? '' : 'disabled';
+                
+                html += `
+                    <div class="schedule-item ${itemClass}">
+                        <div class="schedule-info">
+                            <div>
+                                <div class="schedule-name">
+                                    <span class="status-indicator ${statusClass}"></span>
+                                    ${rule.name}
+                                </div>
+                                <div style="font-size: 0.8em; color: #718096; margin-top: 2px;">
+                                    📅 ${weekdaysText}
+                                </div>
+                            </div>
+                            <div class="schedule-time">${timeText}</div>
+                            <div class="schedule-fans">${fansText}</div>
+                        </div>
+                        <div class="schedule-actions">
+                            <button class="btn btn-small ${isEnabled ? 'btn-warning' : 'btn-success'}" 
+                                    onclick="toggleScheduleRule(${index})">
+                                ${isEnabled ? '⏸️ Pause' : '▶️ Start'}
+                            </button>
+                            <button class="btn btn-danger btn-small" onclick="deleteScheduleRule(${index})">
+                                🗑️
+                            </button>
+                        </div>
+                    </div>
+                `;
+            });
+            
+            listElement.innerHTML = html;
+        }
+        
+        function toggleScheduleRule(index) {
+            fetch(`/api/schedule/toggle?id=${index}`)
+                .then(response => response.json())
+                .then(data => {
+                    if (data.status === 'success') {
+                        loadSchedule();
+                    } else {
+                        alert(`❌ Fehler: ${data.message}`);
+                    }
+                })
+                .catch(error => {
+                    console.error('Fehler:', error);
+                    alert('❌ Kommunikationsfehler mit ESP32');
+                });
+        }
+        
+        function deleteScheduleRule(index) {
+            const rule = currentSchedule[index];
+            if (confirm(`Möchten Sie die Regel "${rule.name}" wirklich löschen?`)) {
+                fetch(`/api/schedule/delete?id=${index}`)
+                    .then(response => response.json())
+                    .then(data => {
+                        if (data.status === 'success') {
+                            loadSchedule();
+                        } else {
+                            alert(`❌ Fehler: ${data.message}`);
+                        }
+                    })
+                    .catch(error => {
+                        console.error('Fehler:', error);
+                        alert('❌ Kommunikationsfehler mit ESP32');
+                    });
+            }
+        }
+        
+        function clearAllSchedules() {
+            if (confirm('Möchten Sie wirklich ALLE Zeitplan-Regeln löschen?')) {
+                fetch('/api/schedule/clear')
+                    .then(response => response.json())
+                    .then(data => {
+                        if (data.status === 'success') {
+                            alert('✅ Alle Zeitplan-Regeln gelöscht');
+                            loadSchedule();
+                        } else {
+                            alert(`❌ Fehler: ${data.message}`);
+                        }
+                    })
+                    .catch(error => {
+                        console.error('Fehler:', error);
+                        alert('❌ Kommunikationsfehler mit ESP32');
+                    });
+            }
+        }
+        
+        // Aktuelle Einstellungen
+        function refreshCurrentSettings() {
             fetch('/api/fans')
                 .then(response => response.json())
                 .then(data => {
-                    updateFanDisplay(data);
-                    // Update Slider-Positionen
-                    umluftSlider.value = data.umluft;
-                    abluftSlider.value = data.abluft;
-                    umluftValueDisplay.textContent = data.umluft + '%';
-                    abluftValueDisplay.textContent = data.abluft + '%';
+                    document.getElementById('currentUmluft').textContent = `${data.umluft || 0}%`;
+                    document.getElementById('currentAbluft').textContent = `${data.abluft || 0}%`;
+                    document.getElementById('lastChange').textContent = new Date().toLocaleString('de-DE');
+                    
+                    // Slider aktualisieren
+                    document.getElementById('umluftSlider').value = data.umluft || 0;
+                    document.getElementById('abluftSlider').value = data.abluft || 0;
+                    updateSliderValue('umluft', data.umluft || 0);
+                    updateSliderValue('abluft', data.abluft || 0);
                 })
-                .catch(error => console.error('Fehler beim Laden der Ventilator-Daten:', error));
+                .catch(error => {
+                    console.error('Fehler:', error);
+                });
         }
         
-        function updateFanDisplay(data) {
-            document.getElementById('fanUmluft').textContent = data.umluft ? data.umluft.toFixed(0) : '--';
-            document.getElementById('fanAbluft').textContent = data.abluft ? data.abluft.toFixed(0) : '--';
+        function testFans() {
+            if (confirm('Ventilatoren für 10 Sekunden auf 100% setzen?')) {
+                // Aktuelle Werte speichern
+                const currentUmluft = document.getElementById('umluftSlider').value;
+                const currentAbluft = document.getElementById('abluftSlider').value;
+                
+                // Auf 100% setzen
+                fetch('/api/fans/set?umluft=100&abluft=100')
+                    .then(() => {
+                        setTimeout(() => {
+                            // Nach 10 Sekunden zurücksetzen
+                            fetch(`/api/fans/set?umluft=${currentUmluft}&abluft=${currentAbluft}`)
+                                .then(() => {
+                                    alert('✅ Ventilator-Test abgeschlossen');
+                                    refreshCurrentSettings();
+                                });
+                        }, 10000);
+                    });
+            }
+        }
+        
+        function emergencyStop() {
+            if (confirm('🚨 NOTAUS: Alle Ventilatoren sofort stoppen?')) {
+                fetch('/api/fans/set?umluft=0&abluft=0')
+                    .then(response => response.json())
+                    .then(data => {
+                        if (data.status === 'success') {
+                            alert('🚨 NOTAUS ausgeführt - Alle Ventilatoren gestoppt');
+                            refreshCurrentSettings();
+                        }
+                    })
+                    .catch(error => {
+                        console.error('Fehler:', error);
+                        alert('❌ NOTAUS fehlgeschlagen!');
+                    });
+            }
         }
         
         function updateConnectionStatus(online) {
@@ -1136,7 +1724,7 @@
             fetchSensorData();
             fetchSystemStatus();
             fetchHistoricalData();
-            fetchFanStatus();
+            refreshCurrentSettings();
         }
         
         function updateSensorDisplay(data) {
@@ -1307,32 +1895,6 @@
             console.log('Auto-update gestartet mit Intervall:', currentInterval, 'Sekunden');
         }
         
-        // Seite laden
-        document.addEventListener('DOMContentLoaded', function() {
-            console.log('DOM Content loaded, starting auto-update...');
-            startAutoUpdate();
-        });
-        
-        // Beim Verlassen der Seite Timer stoppen
-        window.addEventListener('beforeunload', function() {
-            if (updateTimer) {
-                clearInterval(updateTimer);
-            }
-        });
-        
-        // Visibility API - Updates pausieren wenn Tab nicht aktiv
-        document.addEventListener('visibilitychange', function() {
-            if (document.hidden) {
-                if (updateTimer) {
-                    clearInterval(updateTimer);
-                    console.log('Tab hidden, pausing updates');
-                }
-            } else {
-                console.log('Tab visible, resuming updates');
-                startAutoUpdate();
-            }
-        });
-        
         // OTA Update Funktionen
         function checkForUpdates() {
             fetch('/api/ota/check')
@@ -1372,25 +1934,6 @@
             }
         }
         
-        function performRollback() {
-            if (confirm('Möchten Sie wirklich zur vorherigen Version zurückkehren?\n\nDer ESP32 wird neu gestartet.')) {
-                fetch('/api/ota/rollback')
-                    .then(response => response.json())
-                    .then(data => {
-                        if (data.status === 'success') {
-                            alert(data.message);
-                            updateConnectionStatus(false);
-                        } else {
-                            alert(`Rollback fehlgeschlagen: ${data.message}`);
-                        }
-                    })
-                    .catch(error => {
-                        console.error('Rollback fehlgeschlagen:', error);
-                        alert('Rollback fehlgeschlagen!');
-                    });
-            }
-        }
-        
         function showSystemInfo() {
             fetch('/api/system/info')
                 .then(response => response.json())
@@ -1406,7 +1949,7 @@
                         info += `\nWebREPL Zugriff:\n`;
                         info += `1. Öffne http://micropython.org/webrepl/\n`;
                         info += `2. Verbinde zu: ws://${data.network_info.ip}:8266/\n`;
-                        info += `3. Passwort: esp32grow (bitte ändern!)\n`;
+                        info += `3. Passwort: (leer lassen)\n`;
                     }
                     
                     info += `\nThonny Netzwerk-Zugriff:\n`;
@@ -1425,17 +1968,54 @@
                     info += data.files.filter(f => f.endsWith('.py') || f.endsWith('.json')).join(', ');
                     
                     alert(info);
-                    
-                    // Zeige Rollback-Button wenn Backup vorhanden
-                    if (data.has_backup && confirm('\nBackup gefunden! Möchten Sie ein Rollback durchführen?')) {
-                        performRollback();
-                    }
                 })
                 .catch(error => {
                     console.error('System-Info fehlgeschlagen:', error);
                     alert('Konnte System-Informationen nicht abrufen!');
                 });
         }
+        
+        // Initialisierung
+        document.addEventListener('DOMContentLoaded', function() {
+            // Standard-Wochentage auswählen (Mo-Fr)
+            selectWorkdays();
+            
+            // Aktuelle Einstellungen laden
+            refreshCurrentSettings();
+            
+            // Zeitplan laden
+            loadSchedule();
+            
+            // Auto-update starten
+            startAutoUpdate();
+            
+            // Auto-refresh alle 30 Sekunden für aktuelle Einstellungen
+            setInterval(() => {
+                if (document.querySelector('#current-tab').classList.contains('active')) {
+                    refreshCurrentSettings();
+                }
+            }, 30000);
+        });
+        
+        // Beim Verlassen der Seite Timer stoppen
+        window.addEventListener('beforeunload', function() {
+            if (updateTimer) {
+                clearInterval(updateTimer);
+            }
+        });
+        
+        // Visibility API - Updates pausieren wenn Tab nicht aktiv
+        document.addEventListener('visibilitychange', function() {
+            if (document.hidden) {
+                if (updateTimer) {
+                    clearInterval(updateTimer);
+                    console.log('Tab hidden, pausing updates');
+                }
+            } else {
+                console.log('Tab visible, resuming updates');
+                startAutoUpdate();
+            }
+        });
         
         // Debug-Funktionen
         window.debugFetch = function() {
