@@ -456,6 +456,7 @@
                 <div class="action-buttons">
                     <button class="btn btn-danger" onclick="resetDevice()">⚠️ Reset ESP32</button>
                     <button class="btn btn-warning" onclick="checkForUpdates()">🔄 Check Updates</button>
+                    <button class="btn" onclick="showSystemInfo()">ℹ️ System Info</button>
                 </div>
             </div>
         </div>
@@ -1369,6 +1370,71 @@
                         alert('Update fehlgeschlagen!');
                     });
             }
+        }
+        
+        function performRollback() {
+            if (confirm('Möchten Sie wirklich zur vorherigen Version zurückkehren?\n\nDer ESP32 wird neu gestartet.')) {
+                fetch('/api/ota/rollback')
+                    .then(response => response.json())
+                    .then(data => {
+                        if (data.status === 'success') {
+                            alert(data.message);
+                            updateConnectionStatus(false);
+                        } else {
+                            alert(`Rollback fehlgeschlagen: ${data.message}`);
+                        }
+                    })
+                    .catch(error => {
+                        console.error('Rollback fehlgeschlagen:', error);
+                        alert('Rollback fehlgeschlagen!');
+                    });
+            }
+        }
+        
+        function showSystemInfo() {
+            fetch('/api/system/info')
+                .then(response => response.json())
+                .then(data => {
+                    let info = `=== ESP32 System Information ===\n\n`;
+                    info += `Firmware Version: ${data.version}\n`;
+                    info += `IP-Adresse: ${data.network_info.ip}\n`;
+                    info += `MAC-Adresse: ${data.network_info.mac}\n`;
+                    info += `Freier Flash: ${Math.round(data.free_flash / 1024)} KB\n`;
+                    info += `WebREPL aktiv: ${data.webrepl_active ? 'Ja' : 'Nein'}\n`;
+                    
+                    if (data.webrepl_active) {
+                        info += `\nWebREPL Zugriff:\n`;
+                        info += `1. Öffne http://micropython.org/webrepl/\n`;
+                        info += `2. Verbinde zu: ws://${data.network_info.ip}:8266/\n`;
+                        info += `3. Passwort: esp32grow (bitte ändern!)\n`;
+                    }
+                    
+                    info += `\nThonny Netzwerk-Zugriff:\n`;
+                    info += `1. Extras > Optionen > Interpreter\n`;
+                    info += `2. MicroPython (ESP32) > WebREPL\n`;
+                    info += `3. ws://${data.network_info.ip}:8266/\n`;
+                    
+                    if (data.has_backup) {
+                        info += `\n✅ Backup vorhanden (Rollback möglich)`;
+                    }
+                    if (data.has_failed_update) {
+                        info += `\n⚠️ Fehlgeschlagenes Update gefunden`;
+                    }
+                    
+                    info += `\n\nDateien auf dem ESP32:\n`;
+                    info += data.files.filter(f => f.endsWith('.py') || f.endsWith('.json')).join(', ');
+                    
+                    alert(info);
+                    
+                    // Zeige Rollback-Button wenn Backup vorhanden
+                    if (data.has_backup && confirm('\nBackup gefunden! Möchten Sie ein Rollback durchführen?')) {
+                        performRollback();
+                    }
+                })
+                .catch(error => {
+                    console.error('System-Info fehlgeschlagen:', error);
+                    alert('Konnte System-Informationen nicht abrufen!');
+                });
         }
         
         // Debug-Funktionen
