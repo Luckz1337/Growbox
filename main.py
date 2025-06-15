@@ -1,4 +1,4 @@
-from machine import Pin, I2C, reset, WDT, ADC
+from machine import Pin, I2C, reset, WDT, ADC, PWM
 from libraries import bme680
 from libraries import CCS811
 from libraries import bh1750
@@ -33,6 +33,10 @@ CONFIG = {
     'MOISTURE_WATER_RAW1': 1500, # Sensor1 nass (Wasser)
     'MOISTURE_AIR_RAW2': 3131,   # Sensor2 trocken (Luft)
     'MOISTURE_WATER_RAW2': 1500, # Sensor2 nass (Wasser)
+    # Ventilator Konfiguration
+    'FAN_PIN_UMLUFT': 9,     # SIG am MOSFET für Umluft
+    'FAN_PIN_ABLUFT': 12,    # SIG am MOSFET für Abluft
+    'FAN_PWM_FREQ': 250,
 }
 
 # Vereinfachte Error-Klasse
@@ -226,6 +230,67 @@ class MoistureSensor:
             'pct2': round(pct2, 1),
             'avg': round((pct1 + pct2) / 2, 1)
         }
+
+class FanController:
+    """Klasse zur Steuerung der Ventilatoren"""
+    def __init__(self, pin_umluft, pin_abluft, pwm_freq):
+        self.fan_umluft = PWM(Pin(pin_umluft))
+        self.fan_abluft = PWM(Pin(pin_abluft))
+        self.fan_umluft.freq(pwm_freq)
+        self.fan_abluft.freq(pwm_freq)
+        
+        # Speichere aktuelle Geschwindigkeiten
+        self.umluft_speed = 0.0
+        self.abluft_speed = 0.0
+        
+        # Starte mit ausgeschalteten Ventilatoren
+        self.set_umluft_speed(0)
+        self.set_abluft_speed(0)
+    
+    def set_umluft_speed(self, percent):
+        """Setzt die Umluft-Drehzahl auf 'percent' Prozent (0.0 .. 100.0)"""
+        if not 0 <= percent <= 100:
+            raise ValueError("percent muss zwischen 0 und 100 liegen")
+        self.umluft_speed = percent
+        duty = int(percent / 100 * 65535)
+        self.fan_umluft.duty_u16(duty)
+        print(f"Umluft-Ventilator auf {percent}% gesetzt")
+    
+    def set_abluft_speed(self, percent):
+        """Setzt die Abluft-Drehzahl auf 'percent' Prozent (0.0 .. 100.0)"""
+        if not 0 <= percent <= 100:
+            raise ValueError("percent muss zwischen 0 und 100 liegen")
+        self.abluft_speed = percent
+        duty = int(percent / 100 * 65535)
+        self.fan_abluft.duty_u16(duty)
+        print(f"Abluft-Ventilator auf {percent}% gesetzt")
+    
+    def get_speeds(self):
+        """Gibt die aktuellen Geschwindigkeiten zurück"""
+        return {
+            'umluft': self.umluft_speed,
+            'abluft': self.abluft_speed
+        }
+    
+    def auto_control(self, temp, humidity, co2):
+        """Automatische Ventilatorsteuerung basierend auf Sensordaten"""
+        # Beispiel für automatische Steuerung (kann angepasst werden)
+        if temp > 28 or humidity > 70 or co2 > 1000:
+            # Hohe Werte - mehr Belüftung
+            self.set_umluft_speed(80)
+            self.set_abluft_speed(80)
+        elif temp > 25 or humidity > 60 or co2 > 800:
+            # Mittlere Werte
+            self.set_umluft_speed(50)
+            self.set_abluft_speed(50)
+        elif temp > 22 or humidity > 50 or co2 > 600:
+            # Normale Werte
+            self.set_umluft_speed(30)
+            self.set_abluft_speed(30)
+        else:
+            # Niedrige Werte - minimale Belüftung
+            self.set_umluft_speed(20)
+            self.set_abluft_speed(20)
 
 class SensorManager:
     def __init__(self, mux):
@@ -587,6 +652,72 @@ class WebServer:
                     "message": "ESP32-S3 Test Response"
                 }
                 self.send_json(client, test_data)
+            elif path == "/api/fans":
+                # Ventilator-Status
+                fan_status = fans.get_speeds()
+                self.send_json(client, fan_status)
+            elif path.startswith("/api/fans/set"):
+                # Ventilator-Steuerung
+                try:
+                    # Parse Parameter aus URL
+                    if "?" in path:
+                        params = path.split("?")[1]
+                        param_dict = {}
+                        for param in params.split("&"):
+                            key, value = param.split("=")
+                            param_dict[key] = float(value)
+                        
+                        if "umluft" in param_dict:
+                            fans.set_umluft_speed(param_dict["umluft"])
+                        if "abluft" in param_dict:
+                            fans.set_abluft_speed(param_dict["abluft"])
+                        
+                        response = {
+                            "status": "success",
+                            "speeds": fans.get_speeds()
+                        }
+                        self.send_json(client, response)
+                    else:
+                        self.send_json(client, {"error": "No parameters"})
+                except Exception as e:
+                    self.send_json(client, {"error": str(e)})
+            elif path == "/api/ota/check":
+                # OTA Update Check
+                try:
+                    from ota.ota import OTAUpdater
+                    firmware_url = "https://raw.githubusercontent.com/DEIN_USERNAME/DEIN_REPO/"
+                    ota = OTAUpdater(SSID, PASSWORD, firmware_url, "main.py")
+                    
+                    if ota.check_for_updates():
+                        response = {
+                            "update_available": True,
+                            "current_version": ota.current_version,
+                            "latest_version": ota.latest_version
+                        }
+                    else:
+                        response = {
+                            "update_available": False,
+                            "current_version": ota.current_version,
+                            "latest_version": ota.latest_version
+                        }
+                    self.send_json(client, response)
+                except Exception as e:
+                    self.send_json(client, {"error": str(e)})
+            elif path == "/api/ota/update":
+                # OTA Update durchführen
+                try:
+                    from ota.ota import OTAUpdater
+                    firmware_url = "https://raw.githubusercontent.com/DEIN_USERNAME/DEIN_REPO/"
+                    ota = OTAUpdater(SSID, PASSWORD, firmware_url, "main.py")
+                    
+                    client.send(b"HTTP/1.1 200 OK\r\n\r\nStarting OTA update...")
+                    client.close()
+                    time.sleep(1)
+                    
+                    # Update durchführen (führt zum Neustart)
+                    ota.download_and_install_update_if_available()
+                except Exception as e:
+                    self.send_json(client, {"error": str(e)})
             elif path == "/reset":
                 client.send(b"HTTP/1.1 200 OK\r\n\r\nReset...")
                 client.close()
@@ -606,6 +737,7 @@ class WebServer:
 wifi = None
 sensors = None
 sensor_data = {}
+fans = None
 
 def sensor_loop():
     global sensor_data
@@ -653,6 +785,11 @@ def sensor_loop():
             print(f"🌱 Bodenfeuchtigkeit S1:  {data['moisture1']:.1f} %")
             print(f"🌱 Bodenfeuchtigkeit S2:  {data['moisture2']:.1f} %")
             print(f"🌱 Bodenfeuchtigkeit Ø:   {data['moisture_avg']:.1f} % ({data['moisture_status']})")
+            
+            # Ventilator-Status
+            fan_speeds = fans.get_speeds()
+            print(f"🌀 Umluft-Ventilator:     {fan_speeds['umluft']:.0f} %")
+            print(f"💨 Abluft-Ventilator:     {fan_speeds['abluft']:.0f} %")
             
             # System-Metriken alle 5 Zyklen
             counter += 1
@@ -717,11 +854,25 @@ def sensor_loop():
             
         time.sleep(CONFIG['SENSOR_READ_INTERVAL'])
 
+def check_for_ota_updates():
+    """Prüft auf OTA-Updates beim Start"""
+    try:
+        print("Prüfe auf OTA-Updates...")
+        firmware_url = "https://raw.githubusercontent.com/DEIN_USERNAME/DEIN_REPO/"
+        ota_updater = OTAUpdater(SSID, PASSWORD, firmware_url, "main.py")
+        ota_updater.download_and_install_update_if_available()
+    except Exception as e:
+        print(f"OTA-Update-Check fehlgeschlagen: {e}")
+        # Fahre normal fort wenn Update fehlschlägt
+
 def main():
-    global wifi, sensors, sensor_data
+    global wifi, sensors, sensor_data, fans
     
     print("ESP32-S3 FireBeetle 2 Sensor Station")
     print("=====================================")
+    
+    # Optional: OTA-Update Check beim Start
+    # check_for_ota_updates()
     
     # Watchdog
     wdt = WDT(timeout=30000)
@@ -743,6 +894,14 @@ def main():
     
     # Zeit
     sync_time()
+    
+    # Ventilatoren initialisieren
+    fans = FanController(
+        CONFIG['FAN_PIN_UMLUFT'],
+        CONFIG['FAN_PIN_ABLUFT'],
+        CONFIG['FAN_PWM_FREQ']
+    )
+    print("Ventilatoren initialisiert")
     
     # I2C und Sensoren initialisieren
     try:
