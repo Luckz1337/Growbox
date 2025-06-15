@@ -249,6 +249,22 @@
             box-shadow: 0 4px 12px rgba(245, 101, 101, 0.4);
         }
         
+        .btn-warning {
+            background: linear-gradient(135deg, #f59e0b, #d97706);
+        }
+        
+        .btn-warning:hover {
+            box-shadow: 0 4px 12px rgba(245, 158, 11, 0.4);
+        }
+        
+        .btn-success {
+            background: linear-gradient(135deg, #10b981, #059669);
+        }
+        
+        .btn-success:hover {
+            box-shadow: 0 4px 12px rgba(16, 185, 129, 0.4);
+        }
+        
         .timestamp {
             text-align: center;
             color: #718096;
@@ -314,6 +330,77 @@
             flex-wrap: wrap;
         }
         
+        .fan-controls {
+            display: flex;
+            flex-direction: column;
+            gap: 20px;
+            margin-top: 15px;
+        }
+        
+        .fan-control {
+            display: flex;
+            align-items: center;
+            gap: 15px;
+            flex-wrap: wrap;
+        }
+        
+        .fan-label {
+            font-weight: 600;
+            color: #4a5568;
+            min-width: 180px;
+        }
+        
+        .fan-slider {
+            flex: 1;
+            min-width: 200px;
+            height: 6px;
+            background: #e2e8f0;
+            border-radius: 3px;
+            outline: none;
+            -webkit-appearance: none;
+        }
+        
+        .fan-slider::-webkit-slider-thumb {
+            -webkit-appearance: none;
+            appearance: none;
+            width: 20px;
+            height: 20px;
+            background: #48bb78;
+            cursor: pointer;
+            border-radius: 50%;
+            box-shadow: 0 2px 6px rgba(0,0,0,0.2);
+        }
+        
+        .fan-value {
+            font-weight: bold;
+            color: #2d3748;
+            min-width: 50px;
+            text-align: center;
+        }
+        
+        .btn-small {
+            padding: 6px 12px;
+            font-size: 0.9em;
+        }
+        
+        .fan-presets {
+            display: flex;
+            gap: 10px;
+            margin-top: 10px;
+            flex-wrap: wrap;
+            justify-content: center;
+        }
+        
+        .btn-preset {
+            background: linear-gradient(135deg, #718096, #4a5568);
+            padding: 8px 16px;
+            font-size: 0.9em;
+        }
+        
+        .btn-preset:hover {
+            background: linear-gradient(135deg, #4a5568, #2d3748);
+        }
+        
         @media (max-width: 1200px) {
             .main-layout {
                 grid-template-columns: 1fr;
@@ -368,6 +455,35 @@
                 </div>
                 <div class="action-buttons">
                     <button class="btn btn-danger" onclick="resetDevice()">⚠️ Reset ESP32</button>
+                    <button class="btn btn-warning" onclick="checkForUpdates()">🔄 Check Updates</button>
+                </div>
+            </div>
+        </div>
+        
+        <!-- Ventilator-Steuerung -->
+        <div class="controls" style="margin-top: 20px;">
+            <div class="card-title">🌀 Ventilator-Steuerung</div>
+            <div class="fan-controls">
+                <div class="fan-control">
+                    <label class="fan-label">🌀 Umluft-Ventilator:</label>
+                    <input type="range" class="fan-slider" id="umluftSlider" 
+                           min="0" max="100" value="0" step="5">
+                    <span class="fan-value" id="umluftValue">0%</span>
+                    <button class="btn btn-small" onclick="setFanSpeed('umluft')">Setzen</button>
+                </div>
+                <div class="fan-control">
+                    <label class="fan-label">💨 Abluft-Ventilator:</label>
+                    <input type="range" class="fan-slider" id="abluftSlider" 
+                           min="0" max="100" value="0" step="5">
+                    <span class="fan-value" id="abluftValue">0%</span>
+                    <button class="btn btn-small" onclick="setFanSpeed('abluft')">Setzen</button>
+                </div>
+                <div class="fan-presets">
+                    <button class="btn btn-preset" onclick="setPreset(0, 0)">🔴 Aus</button>
+                    <button class="btn btn-preset" onclick="setPreset(20, 20)">🟡 Niedrig</button>
+                    <button class="btn btn-preset" onclick="setPreset(50, 50)">🟠 Mittel</button>
+                    <button class="btn btn-preset" onclick="setPreset(80, 80)">🟢 Hoch</button>
+                    <button class="btn btn-preset" onclick="setPreset(100, 100)">🔵 Max</button>
                 </div>
             </div>
         </div>
@@ -455,6 +571,18 @@
                                     <span class="sensor-value" id="moistureAvg">--</span>
                                     <span class="moisture-status" id="moistureStatus"></span>
                                 </td>
+                                <td>%</td>
+                            </tr>
+                            <!-- Ventilatoren -->
+                            <tr>
+                                <td rowspan="2">Ventilatoren</td>
+                                <td>Umluft-Ventilator</td>
+                                <td class="sensor-value" id="fanUmluft">--</td>
+                                <td>%</td>
+                            </tr>
+                            <tr>
+                                <td>Abluft-Ventilator</td>
+                                <td class="sensor-value" id="fanAbluft">--</td>
                                 <td>%</td>
                             </tr>
                         </tbody>
@@ -859,6 +987,76 @@
             }
         });
         
+        // Ventilator-Steuerung
+        const umluftSlider = document.getElementById('umluftSlider');
+        const umluftValueDisplay = document.getElementById('umluftValue');
+        const abluftSlider = document.getElementById('abluftSlider');
+        const abluftValueDisplay = document.getElementById('abluftValue');
+        
+        umluftSlider.addEventListener('input', function() {
+            umluftValueDisplay.textContent = this.value + '%';
+        });
+        
+        abluftSlider.addEventListener('input', function() {
+            abluftValueDisplay.textContent = this.value + '%';
+        });
+        
+        function setFanSpeed(fanType) {
+            const value = fanType === 'umluft' ? umluftSlider.value : abluftSlider.value;
+            const params = `${fanType}=${value}`;
+            
+            fetch(`/api/fans/set?${params}`)
+                .then(response => response.json())
+                .then(data => {
+                    if (data.status === 'success') {
+                        console.log(`${fanType} auf ${value}% gesetzt`);
+                        updateFanDisplay(data.speeds);
+                    } else {
+                        alert(`Fehler beim Setzen der Ventilatorgeschwindigkeit: ${data.error}`);
+                    }
+                })
+                .catch(error => {
+                    console.error('Fehler:', error);
+                    alert('Fehler bei der Kommunikation mit dem ESP32');
+                });
+        }
+        
+        function setPreset(umluft, abluft) {
+            umluftSlider.value = umluft;
+            abluftSlider.value = abluft;
+            umluftValueDisplay.textContent = umluft + '%';
+            abluftValueDisplay.textContent = abluft + '%';
+            
+            fetch(`/api/fans/set?umluft=${umluft}&abluft=${abluft}`)
+                .then(response => response.json())
+                .then(data => {
+                    if (data.status === 'success') {
+                        console.log(`Preset gesetzt: Umluft ${umluft}%, Abluft ${abluft}%`);
+                        updateFanDisplay(data.speeds);
+                    }
+                })
+                .catch(error => console.error('Fehler:', error));
+        }
+        
+        function fetchFanStatus() {
+            fetch('/api/fans')
+                .then(response => response.json())
+                .then(data => {
+                    updateFanDisplay(data);
+                    // Update Slider-Positionen
+                    umluftSlider.value = data.umluft;
+                    abluftSlider.value = data.abluft;
+                    umluftValueDisplay.textContent = data.umluft + '%';
+                    abluftValueDisplay.textContent = data.abluft + '%';
+                })
+                .catch(error => console.error('Fehler beim Laden der Ventilator-Daten:', error));
+        }
+        
+        function updateFanDisplay(data) {
+            document.getElementById('fanUmluft').textContent = data.umluft ? data.umluft.toFixed(0) : '--';
+            document.getElementById('fanAbluft').textContent = data.abluft ? data.abluft.toFixed(0) : '--';
+        }
+        
         function updateConnectionStatus(online) {
             isOnline = online;
             if (online) {
@@ -937,6 +1135,7 @@
             fetchSensorData();
             fetchSystemStatus();
             fetchHistoricalData();
+            fetchFanStatus();
         }
         
         function updateSensorDisplay(data) {
@@ -1132,6 +1331,45 @@
                 startAutoUpdate();
             }
         });
+        
+        // OTA Update Funktionen
+        function checkForUpdates() {
+            fetch('/api/ota/check')
+                .then(response => response.json())
+                .then(data => {
+                    if (data.error) {
+                        alert(`Fehler beim Update-Check: ${data.error}\n\nStelle sicher, dass die GitHub-URL in der main.py konfiguriert ist.`);
+                        return;
+                    }
+                    
+                    if (data.update_available) {
+                        const msg = `Update verfügbar!\n\nAktuelle Version: ${data.current_version}\nNeue Version: ${data.latest_version}\n\nJetzt installieren?`;
+                        if (confirm(msg)) {
+                            performUpdate();
+                        }
+                    } else {
+                        alert(`Keine Updates verfügbar.\n\nAktuelle Version: ${data.current_version}`);
+                    }
+                })
+                .catch(error => {
+                    console.error('Update-Check fehlgeschlagen:', error);
+                    alert('Update-Check fehlgeschlagen!');
+                });
+        }
+        
+        function performUpdate() {
+            if (confirm('Das Update startet den ESP32 neu. Fortfahren?')) {
+                fetch('/api/ota/update')
+                    .then(() => {
+                        alert('Update gestartet! Der ESP32 wird neu gestartet...');
+                        updateConnectionStatus(false);
+                    })
+                    .catch(error => {
+                        console.error('Update fehlgeschlagen:', error);
+                        alert('Update fehlgeschlagen!');
+                    });
+            }
+        }
         
         // Debug-Funktionen
         window.debugFetch = function() {
