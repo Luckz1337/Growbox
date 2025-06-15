@@ -77,6 +77,52 @@ def cleanup_csv(filename, max_lines):
     except Exception as e:
         log_error("CSV cleanup", str(e))
 
+# URL-Dekodierung Hilfsfunktion
+def url_decode(encoded_str):
+    """Einfache URL-Dekodierung für häufige Zeichen"""
+    if not encoded_str:
+        return encoded_str
+    
+    # Häufige URL-Kodierungen
+    replacements = {
+        '%20': ' ',     # Leerzeichen
+        '+': ' ',       # Leerzeichen (alternative Kodierung)
+        '%2C': ',',     # Komma
+        '%3D': '=',     # Gleichheitszeichen
+        '%26': '&',     # Ampersand
+        '%3F': '?',     # Fragezeichen
+        '%23': '#',     # Hash
+        '%2F': '/',     # Schrägstrich
+        '%3A': ':',     # Doppelpunkt
+        '%3B': ';',     # Semikolon
+        '%40': '@',     # At-Zeichen
+        '%21': '!',     # Ausrufezeichen
+        '%24': '$',     # Dollar
+        '%27': "'",     # Apostroph
+        '%28': '(',     # Klammer auf
+        '%29': ')',     # Klammer zu
+        '%2A': '*',     # Stern
+        '%2B': '+',     # Plus (wenn nicht als Leerzeichen)
+        '%2D': '-',     # Minus
+        '%2E': '.',     # Punkt
+        '%5F': '_',     # Unterstrich
+        '%7E': '~',     # Tilde
+        # Deutsche Umlaute
+        '%C3%A4': 'ä',  # ä
+        '%C3%B6': 'ö',  # ö
+        '%C3%BC': 'ü',  # ü
+        '%C3%84': 'Ä',  # Ä
+        '%C3%96': 'Ö',  # Ö
+        '%C3%9C': 'Ü',  # Ü
+        '%C3%9F': 'ß',  # ß
+    }
+    
+    decoded = encoded_str
+    for encoded, decoded_char in replacements.items():
+        decoded = decoded.replace(encoded, decoded_char)
+    
+    return decoded
+
 # VPD Berechnung
 def calculate_vpd(temp_c, humidity_percent):
     """
@@ -233,7 +279,7 @@ class MoistureSensor:
         }
 
 class FanController:
-    """Klasse zur Steuerung der Ventilatoren"""
+    """Erweiterte Klasse zur Steuerung der Ventilatoren mit Persistierung und Zeitplanung"""
     def __init__(self, pin_umluft, pin_abluft, pwm_freq):
         self.fan_umluft = PWM(Pin(pin_umluft))
         self.fan_abluft = PWM(Pin(pin_abluft))
@@ -244,26 +290,92 @@ class FanController:
         self.umluft_speed = 0.0
         self.abluft_speed = 0.0
         
-        # Starte mit ausgeschalteten Ventilatoren
-        self.set_umluft_speed(0)
-        self.set_abluft_speed(0)
+        # Datei für persistente Speicherung
+        self.settings_file = 'fan_settings.json'
+        self.schedule_file = 'fan_schedule.json'
+        
+        # Lade gespeicherte Einstellungen
+        self.load_settings()
+        
+        # Lade Zeitplan
+        self.schedule = self.load_schedule()
+        
+        # Setze gespeicherte Geschwindigkeiten
+        self.set_umluft_speed(self.umluft_speed, save=False)
+        self.set_abluft_speed(self.abluft_speed, save=False)
+        
+        print(f"Ventilatoren wiederhergestellt: Umluft {self.umluft_speed}%, Abluft {self.abluft_speed}%")
     
-    def set_umluft_speed(self, percent):
+    def save_settings(self):
+        """Speichert aktuelle Ventilator-Einstellungen"""
+        try:
+            settings = {
+                'umluft_speed': self.umluft_speed,
+                'abluft_speed': self.abluft_speed,
+                'last_updated': format_datetime(localtime_with_offset())
+            }
+            with open(self.settings_file, 'w') as f:
+                json.dump(settings, f)
+            print(f"Ventilator-Einstellungen gespeichert: {settings}")
+        except Exception as e:
+            log_error("save_settings", str(e))
+    
+    def load_settings(self):
+        """Lädt gespeicherte Ventilator-Einstellungen"""
+        try:
+            with open(self.settings_file, 'r') as f:
+                settings = json.load(f)
+                self.umluft_speed = settings.get('umluft_speed', 0.0)
+                self.abluft_speed = settings.get('abluft_speed', 0.0)
+                print(f"Ventilator-Einstellungen geladen: Umluft {self.umluft_speed}%, Abluft {self.abluft_speed}%")
+        except Exception as e:
+            print(f"Keine gespeicherten Einstellungen gefunden: {e}")
+            self.umluft_speed = 0.0
+            self.abluft_speed = 0.0
+    
+    def load_schedule(self):
+        """Lädt Zeitplan für Ventilatoren"""
+        try:
+            with open(self.schedule_file, 'r') as f:
+                schedule = json.load(f)
+                print(f"Zeitplan geladen: {len(schedule)} Regeln")
+                return schedule
+        except Exception as e:
+            print(f"Kein Zeitplan gefunden: {e}")
+            return []
+    
+    def save_schedule(self, schedule):
+        """Speichert Zeitplan für Ventilatoren"""
+        try:
+            with open(self.schedule_file, 'w') as f:
+                json.dump(schedule, f)
+            self.schedule = schedule
+            print(f"Zeitplan gespeichert: {len(schedule)} Regeln")
+            return True
+        except Exception as e:
+            log_error("save_schedule", str(e))
+            return False
+    
+    def set_umluft_speed(self, percent, save=True):
         """Setzt die Umluft-Drehzahl auf 'percent' Prozent (0.0 .. 100.0)"""
         if not 0 <= percent <= 100:
             raise ValueError("percent muss zwischen 0 und 100 liegen")
         self.umluft_speed = percent
         duty = int(percent / 100 * 65535)
         self.fan_umluft.duty_u16(duty)
+        if save:
+            self.save_settings()
         print(f"Umluft-Ventilator auf {percent}% gesetzt")
     
-    def set_abluft_speed(self, percent):
+    def set_abluft_speed(self, percent, save=True):
         """Setzt die Abluft-Drehzahl auf 'percent' Prozent (0.0 .. 100.0)"""
         if not 0 <= percent <= 100:
             raise ValueError("percent muss zwischen 0 und 100 liegen")
         self.abluft_speed = percent
         duty = int(percent / 100 * 65535)
         self.fan_abluft.duty_u16(duty)
+        if save:
+            self.save_settings()
         print(f"Abluft-Ventilator auf {percent}% gesetzt")
     
     def get_speeds(self):
@@ -273,9 +385,69 @@ class FanController:
             'abluft': self.abluft_speed
         }
     
+    def check_schedule(self):
+        """Überprüft und wendet Zeitplan an"""
+        if not self.schedule:
+            return False
+        
+        try:
+            current_time = localtime_with_offset()
+            current_hour = current_time[3]
+            current_minute = current_time[4]
+            current_weekday = current_time[6]  # 0=Montag, 6=Sonntag
+            
+            # Finde passende Regel
+            for rule in self.schedule:
+                if not rule.get('enabled', True):
+                    continue
+                
+                # Prüfe Wochentage
+                if 'weekdays' in rule and current_weekday not in rule['weekdays']:
+                    continue
+                
+                # Prüfe Zeit
+                start_hour = rule.get('start_hour', 0)
+                start_minute = rule.get('start_minute', 0)
+                end_hour = rule.get('end_hour', 23)
+                end_minute = rule.get('end_minute', 59)
+                
+                current_minutes = current_hour * 60 + current_minute
+                start_minutes = start_hour * 60 + start_minute
+                end_minutes = end_hour * 60 + end_minute
+                
+                # Handle über Mitternacht hinaus (z.B. 22:00 - 06:00)
+                if start_minutes > end_minutes:
+                    if current_minutes >= start_minutes or current_minutes <= end_minutes:
+                        time_match = True
+                    else:
+                        time_match = False
+                else:
+                    time_match = start_minutes <= current_minutes <= end_minutes
+                
+                if time_match:
+                    # Regel anwenden
+                    umluft_speed = rule.get('umluft_speed', self.umluft_speed)
+                    abluft_speed = rule.get('abluft_speed', self.abluft_speed)
+                    
+                    # Nur ändern wenn unterschiedlich
+                    if umluft_speed != self.umluft_speed or abluft_speed != self.abluft_speed:
+                        print(f"Zeitplan-Regel aktiv: '{rule.get('name', 'Unbenannt')}' - Umluft: {umluft_speed}%, Abluft: {abluft_speed}%")
+                        self.set_umluft_speed(umluft_speed)
+                        self.set_abluft_speed(abluft_speed)
+                        return True
+                    
+            return False
+        except Exception as e:
+            log_error("check_schedule", str(e))
+            return False
+    
     def auto_control(self, temp, humidity, co2):
-        """Automatische Ventilatorsteuerung basierend auf Sensordaten"""
-        # Beispiel für automatische Steuerung (kann angepasst werden)
+        """Automatische Ventilatorsteuerung basierend auf Sensordaten (nur wenn kein Zeitplan aktiv)"""
+        # Prüfe zuerst Zeitplan
+        if self.check_schedule():
+            return  # Zeitplan hat Vorrang
+        
+        # Fallback: Sensor-basierte Steuerung
         if temp > 28 or humidity > 70 or co2 > 1000:
             # Hohe Werte - mehr Belüftung
             self.set_umluft_speed(80)
@@ -572,6 +744,90 @@ class WebServer:
         except Exception as e:
             log_error("send_history", str(e))
 
+    def parse_schedule_params(self, params):
+        """Parst Parameter für Zeitplan-Regeln mit verbesserter URL-Dekodierung"""
+        try:
+            param_dict = {}
+            print(f"DEBUG: Raw params: {params}")  # Debug
+            
+            for param in params.split("&"):
+                if "=" in param:
+                    key, value = param.split("=", 1)
+                    # URL-Dekodierung anwenden
+                    decoded_value = url_decode(value)
+                    param_dict[key] = decoded_value
+                    print(f"DEBUG: {key} = '{value}' -> '{decoded_value}'")  # Debug
+            
+            print(f"DEBUG: Parsed param_dict: {param_dict}")
+            
+            # Validierung der erforderlichen Parameter
+            required = ['name', 'start_hour', 'start_minute', 'end_hour', 'end_minute', 'umluft_speed', 'abluft_speed']
+            for req in required:
+                if req not in param_dict:
+                    print(f"Fehlender Parameter: {req}")
+                    return None
+            
+            try:
+                # Erstelle Regel mit Typkonvertierung
+                rule = {
+                    'name': str(param_dict['name']),
+                    'start_hour': int(param_dict['start_hour']),
+                    'start_minute': int(param_dict['start_minute']),
+                    'end_hour': int(param_dict['end_hour']),
+                    'end_minute': int(param_dict['end_minute']),
+                    'umluft_speed': float(param_dict['umluft_speed']),
+                    'abluft_speed': float(param_dict['abluft_speed']),
+                    'enabled': param_dict.get('enabled', 'true').lower() == 'true',
+                    'created': format_datetime(localtime_with_offset())
+                }
+                print(f"DEBUG: Base rule created: {rule}")
+                
+            except ValueError as e:
+                print(f"Fehler bei Typkonvertierung: {e}")
+                return None
+            
+            # Wochentage verarbeiten
+            if 'weekdays' in param_dict and param_dict['weekdays']:
+                weekdays = []
+                weekday_str = param_dict['weekdays']
+                print(f"DEBUG: Processing weekdays: '{weekday_str}'")
+                
+                # Teile Wochentage auf
+                for day_str in weekday_str.split(','):
+                    day_str = day_str.strip()
+                    if day_str:  # Nur wenn nicht leer
+                        try:
+                            day = int(day_str)
+                            if 0 <= day <= 6:  # Gültige Wochentage (0=Mo, 6=So)
+                                weekdays.append(day)
+                                print(f"DEBUG: Added weekday: {day}")
+                            else:
+                                print(f"Ungültiger Wochentag (muss 0-6 sein): {day}")
+                                return None
+                        except ValueError as e:
+                            print(f"Fehler beim Parsen von Wochentag '{day_str}': {e}")
+                            return None
+                
+                if weekdays:
+                    rule['weekdays'] = weekdays
+                    print(f"DEBUG: Final weekdays: {weekdays}")
+                else:
+                    print("Keine gültigen Wochentage gefunden")
+                    return None
+            else:
+                print("Keine Wochentage-Parameter gefunden - Regel gilt täglich")
+                # Wenn keine Wochentage angegeben, gilt täglich
+                rule['weekdays'] = [0, 1, 2, 3, 4, 5, 6]
+            
+            print(f"DEBUG: Final rule: {rule}")
+            return rule
+            
+        except Exception as e:
+            log_error("parse_schedule_params", str(e))
+            import sys
+            sys.print_exception(e)
+            return None
+
     def handle(self, client, path, sensor_data):
         try:
             print(f"Request: {path}")  # Debug-Ausgabe
@@ -682,6 +938,114 @@ class WebServer:
                         self.send_json(client, {"error": "No parameters"})
                 except Exception as e:
                     self.send_json(client, {"error": str(e)})
+            
+            # Neue Zeitplan-Endpunkte
+            elif path == "/api/schedule":
+                # Zeitplan abrufen
+                schedule_data = {
+                    "schedule": fans.schedule,
+                    "current_settings": fans.get_speeds(),
+                    "current_time": format_datetime(localtime_with_offset())
+                }
+                self.send_json(client, schedule_data)
+                
+            elif path.startswith("/api/schedule/add"):
+                # Neue Zeitplan-Regel hinzufügen
+                try:
+                    if "?" in path:
+                        params = path.split("?")[1]
+                        rule = self.parse_schedule_params(params)
+                        
+                        if rule:
+                            fans.schedule.append(rule)
+                            if fans.save_schedule(fans.schedule):
+                                response = {
+                                    "status": "success",
+                                    "message": "Zeitplan-Regel hinzugefügt",
+                                    "schedule": fans.schedule
+                                }
+                            else:
+                                response = {"status": "error", "message": "Fehler beim Speichern"}
+                        else:
+                            response = {"status": "error", "message": "Ungültige Parameter"}
+                    else:
+                        response = {"status": "error", "message": "Keine Parameter"}
+                    
+                    self.send_json(client, response)
+                except Exception as e:
+                    self.send_json(client, {"status": "error", "message": str(e)})
+                    
+            elif path.startswith("/api/schedule/delete"):
+                # Zeitplan-Regel löschen
+                try:
+                    if "?" in path:
+                        params = path.split("?")[1]
+                        param_dict = {}
+                        for param in params.split("&"):
+                            if "=" in param:
+                                key, value = param.split("=", 1)
+                                param_dict[key] = value
+                        
+                        rule_id = int(param_dict.get("id", -1))
+                        if 0 <= rule_id < len(fans.schedule):
+                            deleted_rule = fans.schedule.pop(rule_id)
+                            fans.save_schedule(fans.schedule)
+                            response = {
+                                "status": "success",
+                                "message": f"Regel '{deleted_rule.get('name', 'Unbenannt')}' gelöscht",
+                                "schedule": fans.schedule
+                            }
+                        else:
+                            response = {"status": "error", "message": "Ungültige Regel-ID"}
+                    else:
+                        response = {"status": "error", "message": "Keine Parameter"}
+                    
+                    self.send_json(client, response)
+                except Exception as e:
+                    self.send_json(client, {"status": "error", "message": str(e)})
+                    
+            elif path.startswith("/api/schedule/toggle"):
+                # Zeitplan-Regel aktivieren/deaktivieren
+                try:
+                    if "?" in path:
+                        params = path.split("?")[1]
+                        param_dict = {}
+                        for param in params.split("&"):
+                            if "=" in param:
+                                key, value = param.split("=", 1)
+                                param_dict[key] = value
+                        
+                        rule_id = int(param_dict.get("id", -1))
+                        if 0 <= rule_id < len(fans.schedule):
+                            rule = fans.schedule[rule_id]
+                            rule['enabled'] = not rule.get('enabled', True)
+                            fans.save_schedule(fans.schedule)
+                            status = "aktiviert" if rule['enabled'] else "deaktiviert"
+                            response = {
+                                "status": "success",
+                                "message": f"Regel '{rule.get('name', 'Unbenannt')}' {status}",
+                                "schedule": fans.schedule
+                            }
+                        else:
+                            response = {"status": "error", "message": "Ungültige Regel-ID"}
+                    else:
+                        response = {"status": "error", "message": "Keine Parameter"}
+                    
+                    self.send_json(client, response)
+                except Exception as e:
+                    self.send_json(client, {"status": "error", "message": str(e)})
+                    
+            elif path == "/api/schedule/clear":
+                # Alle Zeitplan-Regeln löschen
+                fans.schedule = []
+                fans.save_schedule(fans.schedule)
+                response = {
+                    "status": "success",
+                    "message": "Alle Zeitplan-Regeln gelöscht",
+                    "schedule": fans.schedule
+                }
+                self.send_json(client, response)
+            
             elif path == "/api/ota/check":
                 # OTA Update Check
                 try:
@@ -825,6 +1189,16 @@ def sensor_loop():
             # CSV schreiben
             write_csv(date, data)
             
+            # Zeitplan überprüfen (alle 60 Sekunden)
+            if counter % 6 == 0:  # Bei 10s Intervall = 60s
+                print("🕒 Überprüfe Zeitplan...")
+                schedule_applied = fans.check_schedule()
+                if schedule_applied:
+                    print("✅ Zeitplan-Regel angewendet")
+            
+            # Automatische Steuerung (nur wenn kein Zeitplan aktiv)
+            # fans.auto_control(data['temp'], data['hum'], data['co2'])
+            
             # Alle Messwerte ausgeben
             print("=" * 60)
             print(f"📊 SENSOR DATEN - {date}")
@@ -845,6 +1219,36 @@ def sensor_loop():
             fan_speeds = fans.get_speeds()
             print(f"🌀 Umluft-Ventilator:     {fan_speeds['umluft']:.0f} %")
             print(f"💨 Abluft-Ventilator:     {fan_speeds['abluft']:.0f} %")
+            
+            # Zeitplan-Info anzeigen (alle 10 Zyklen)
+            if counter % 10 == 0 and fans.schedule:
+                print("-" * 60)
+                print("🕒 ZEITPLAN STATUS")
+                print("-" * 60)
+                current_time = localtime_with_offset()
+                print(f"⏰ Aktuelle Zeit:         {current_time[3]:02d}:{current_time[4]:02d}")
+                print(f"📋 Zeitplan-Regeln:      {len(fans.schedule)} aktiv")
+                
+                active_rules = [rule for rule in fans.schedule if rule.get('enabled', True)]
+                print(f"✅ Aktive Regeln:        {len(active_rules)}")
+                
+                # Zeige nächste Regel
+                next_rule = None
+                current_minutes = current_time[3] * 60 + current_time[4]
+                min_diff = float('inf')
+                
+                for rule in active_rules:
+                    start_minutes = rule['start_hour'] * 60 + rule['start_minute']
+                    if start_minutes > current_minutes:
+                        diff = start_minutes - current_minutes
+                        if diff < min_diff:
+                            min_diff = diff
+                            next_rule = rule
+                
+                if next_rule:
+                    hours = min_diff // 60
+                    minutes = min_diff % 60
+                    print(f"⏭️  Nächste Regel:        '{next_rule['name']}' in {hours:02d}:{minutes:02d}")
             
             # System-Metriken alle 5 Zyklen
             counter += 1
@@ -923,8 +1327,8 @@ def check_for_ota_updates():
 def main():
     global wifi, sensors, sensor_data, fans
     
-    print("ESP32-S3 FireBeetle 2 Sensor Station")
-    print("=====================================")
+    print("ESP32-S3 FireBeetle 2 Sensor Station mit Zeitplanung")
+    print("====================================================")
     
     # Optional: OTA-Update Check beim Start
     # check_for_ota_updates()
@@ -983,13 +1387,13 @@ def main():
     # Kleine Pause damit WebREPL sich stabilisiert
     time.sleep(2)
     
-    # Ventilatoren initialisieren
+    # Ventilatoren initialisieren (mit Persistierung und Zeitplanung)
     fans = FanController(
         CONFIG['FAN_PIN_UMLUFT'],
         CONFIG['FAN_PIN_ABLUFT'],
         CONFIG['FAN_PWM_FREQ']
     )
-    print("Ventilatoren initialisiert")
+    print("Ventilatoren mit Zeitplanung initialisiert")
     
     # I2C und Sensoren initialisieren
     try:
@@ -1026,7 +1430,8 @@ def main():
     server = WebServer()
     s = server.start()
     
-    print("System bereit!")
+    print("System bereit - mit Zeitplanung und persistenten Einstellungen!")
+    print(f"Dashboard: http://{wifi.wlan.ifconfig()[0]}")
     
     # Hauptschleife
     while True:
