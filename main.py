@@ -14,6 +14,7 @@ import ntptime
 import gc
 import os
 import math
+import webrepl
 
 # Konfiguration für ESP32-S3 FireBeetle 2
 CONFIG = {
@@ -718,6 +719,60 @@ class WebServer:
                     ota.download_and_install_update_if_available()
                 except Exception as e:
                     self.send_json(client, {"error": str(e)})
+            elif path == "/api/ota/rollback":
+                # Rollback zur Backup-Version
+                try:
+                    if 'main_backup.py' in os.listdir():
+                        # Erstelle Backup der aktuellen Version
+                        if 'main_failed.py' in os.listdir():
+                            os.remove('main_failed.py')
+                        os.rename('main.py', 'main_failed.py')
+                        
+                        # Restore Backup
+                        os.rename('main_backup.py', 'main.py')
+                        
+                        response = {
+                            "status": "success",
+                            "message": "Rollback erfolgreich. ESP32 wird neu gestartet..."
+                        }
+                        self.send_json(client, response)
+                        time.sleep(2)
+                        reset()
+                    else:
+                        self.send_json(client, {
+                            "status": "error",
+                            "message": "Kein Backup vorhanden"
+                        })
+                except Exception as e:
+                    self.send_json(client, {"error": str(e)})
+            elif path == "/api/system/info":
+                # Erweiterte System-Info inkl. WebREPL Status
+                try:
+                    files = os.listdir()
+                    has_backup = 'main_backup.py' in files
+                    has_failed = 'main_failed.py' in files
+                    
+                    # Version info
+                    current_version = 0
+                    if 'version.json' in files:
+                        with open('version.json', 'r') as f:
+                            current_version = json.load(f).get('version', 0)
+                    
+                    info = {
+                        "version": current_version,
+                        "has_backup": has_backup,
+                        "has_failed_update": has_failed,
+                        "webrepl_active": True,  # Wird in main() aktiviert
+                        "files": files,
+                        "free_flash": os.statvfs('/')[0] * os.statvfs('/')[3],  # Freier Flash-Speicher
+                        "network_info": {
+                            "ip": wifi.wlan.ifconfig()[0],
+                            "mac": ':'.join(['{:02x}'.format(b) for b in wifi.wlan.config('mac')])
+                        }
+                    }
+                    self.send_json(client, info)
+                except Exception as e:
+                    self.send_json(client, {"error": str(e)})
             elif path == "/reset":
                 client.send(b"HTTP/1.1 200 OK\r\n\r\nReset...")
                 client.close()
@@ -875,11 +930,15 @@ def main():
     # check_for_ota_updates()
     
     # Watchdog
-    wdt = WDT(timeout=30000)
+    wdt = WDT(timeout=60000)
     
     # Status LED
     status_led = Pin(CONFIG['LED_PIN'], Pin.OUT)
     status_led.on()
+    
+    # Garbage Collection vor WiFi
+    gc.collect()
+    print(f"Free RAM vor WiFi: {gc.mem_free()} bytes")
     
     # WiFi
     wifi = WiFiManager(SSID, PASSWORD)
@@ -894,6 +953,35 @@ def main():
     
     # Zeit
     sync_time()
+    
+    # WebREPL für Remote-Zugriff aktivieren
+    try:
+        # Stelle sicher dass webrepl_cfg.py existiert (ohne Passwort)
+        try:
+            with open('webrepl_cfg.py', 'w') as f:
+                f.write("PASS = ''\n")  # Leeres Passwort
+            print("WebREPL config ohne Passwort erstellt")
+        except:
+            pass
+        
+        import webrepl
+        webrepl.start()
+        print("=" * 50)
+        print("WebREPL AKTIV (OHNE PASSWORT!)")
+        print(f"IP-Adresse: {wifi.wlan.ifconfig()[0]}")
+        print("Zugriff über:")
+        print(f"1. Web: http://micropython.org/webrepl/")
+        print(f"2. URL: ws://{wifi.wlan.ifconfig()[0]}:8266")
+        print("3. Passwort: (leer lassen/Enter drücken)")
+        print("⚠️  WARNUNG: Kein Passwortschutz aktiv!")
+        print("=" * 50)
+    except Exception as e:
+        print(f"WebREPL FEHLER: {e}")
+        import sys
+        sys.print_exception(e)
+    
+    # Kleine Pause damit WebREPL sich stabilisiert
+    time.sleep(2)
     
     # Ventilatoren initialisieren
     fans = FanController(
