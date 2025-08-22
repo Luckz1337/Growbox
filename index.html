@@ -3,7 +3,7 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>ESP32-S3 Sensor Dashboard mit Zeitplanung</title>
+    <title>ESP32-S3 Sensor Dashboard</title>
     <script src="https://cdnjs.cloudflare.com/ajax/libs/Chart.js/3.9.1/chart.min.js"></script>
     <style>
         body {
@@ -167,6 +167,22 @@
             height: 100%;
             background: linear-gradient(90deg, #48bb78, #38a169);
             transition: width 0.3s ease;
+        }
+        
+        .fan-status-info {
+            background: #f7fafc;
+            border-radius: 10px;
+            padding: 15px;
+            margin-bottom: 20px;
+            display: grid;
+            grid-template-columns: 1fr 1fr;
+            gap: 15px;
+        }
+        
+        .fan-status-item {
+            display: flex;
+            align-items: center;
+            gap: 10px;
         }
         
         .controls {
@@ -335,6 +351,28 @@
             display: flex;
             gap: 10px;
             flex-wrap: wrap;
+        }
+        
+        .console {
+            background: #1a202c;
+            color: #a0aec0;
+            font-family: 'Courier New', monospace;
+            font-size: 0.85em;
+            padding: 15px;
+            border-radius: 8px;
+            height: 300px;
+            overflow-y: auto;
+            white-space: pre-wrap;
+            word-wrap: break-word;
+        }
+        
+        .console-line {
+            margin: 2px 0;
+            padding: 2px 5px;
+        }
+        
+        .console-line:hover {
+            background: rgba(255,255,255,0.05);
         }
         
         /* Zeitplanung Styles */
@@ -607,11 +645,15 @@
     <div class="container">
         <div class="header">
             <h1>🚀 ESP32-S3 FireBeetle Dashboard</h1>
-            <p>Smart Sensor Monitoring System mit Zeitplanung</p>
+            <p>Smart Sensor Monitoring System</p>
         </div>
         
-        <div class="controls">
-            <div class="control-grid">
+        <!-- Ventilator-Steuerung mit Zeitplanung -->
+        <div class="card">
+            <div class="card-title">⚙️ Einstellungen</div>
+            
+            <!-- Update-Intervall hier -->
+            <div style="background: #f7fafc; border-radius: 10px; padding: 15px; margin-bottom: 20px;">
                 <div class="interval-control">
                     <label class="interval-label">Update-Intervall:</label>
                     <input type="range" class="interval-slider" id="intervalSlider" 
@@ -619,27 +661,36 @@
                     <span class="interval-value" id="intervalValue">10 sec</span>
                     <button class="btn" onclick="updateInterval()">Übernehmen</button>
                 </div>
-                <div class="action-buttons">
-                    <button class="btn btn-danger" onclick="resetDevice()">⚠️ Reset ESP32</button>
-                    <button class="btn btn-warning" onclick="checkForUpdates()">🔄 Check Updates</button>
-                    <button class="btn" onclick="showSystemInfo()">ℹ️ System Info</button>
-                </div>
             </div>
-        </div>
-        
-        <!-- Ventilator-Steuerung mit Zeitplanung -->
-        <div class="card">
-            <div class="card-title">🕒 Ventilator-Zeitplanung & Steuerung</div>
             
             <!-- Tabs -->
             <div class="tabs">
                 <button class="tab active" onclick="switchTab('manual')">Manuelle Steuerung</button>
                 <button class="tab" onclick="switchTab('schedule')">Zeitplan verwalten</button>
-                <button class="tab" onclick="switchTab('current')">Aktuelle Einstellungen</button>
             </div>
             
             <!-- Manuelle Steuerung Tab -->
             <div id="manual-tab" class="tab-content active">
+                <!-- Status Info über den Reglern -->
+                <div class="fan-status-info">
+                    <div class="fan-status-item">
+                        <span>🌀 Umluft-Ventilator:</span>
+                        <strong id="currentUmluftDisplay">-- %</strong>
+                    </div>
+                    <div class="fan-status-item">
+                        <span>💨 Abluft-Ventilator:</span>
+                        <strong id="currentAbluftDisplay">-- %</strong>
+                    </div>
+                    <div class="fan-status-item">
+                        <span>🕒 Letzte Änderung:</span>
+                        <span id="lastChangeDisplay">--</span>
+                    </div>
+                    <div class="fan-status-item">
+                        <span>📋 Aktive Regel:</span>
+                        <span id="activeRuleDisplay">Manuelle Steuerung</span>
+                    </div>
+                </div>
+                
                 <div class="schedule-form">
                     <div class="form-group">
                         <label>🌀 Umluft-Ventilator</label>
@@ -672,6 +723,16 @@
                     <button class="btn" onclick="setPreset(50, 50)">🟠 Mittel</button>
                     <button class="btn" onclick="setPreset(80, 80)">🟢 Hoch</button>
                     <button class="btn" onclick="setPreset(100, 100)">🔵 Maximum</button>
+                </div>
+                
+                <!-- Quick Actions -->
+                <div style="margin-top: 20px; padding: 15px; background: #f7fafc; border-radius: 10px;">
+                    <div style="display: flex; gap: 10px; flex-wrap: wrap; justify-content: center;">
+                        <button class="btn btn-warning" onclick="testFans()">🧪 Ventilatoren testen</button>
+                        <button class="btn btn-danger" onclick="emergencyStop()">🚨 Notaus</button>
+                        <button class="btn btn-danger" onclick="resetDevice()">⚠️ Reset ESP32</button>
+                        <button class="btn btn-success" onclick="downloadCSV()">📥 CSV Download</button>
+                    </div>
                 </div>
             </div>
             
@@ -760,50 +821,10 @@
                     </div>
                 </div>
             </div>
-            
-            <!-- Aktuelle Einstellungen Tab -->
-            <div id="current-tab" class="tab-content">
-                <div class="schedule-form">
-                    <div class="form-group">
-                        <label>🌀 Umluft-Ventilator</label>
-                        <div style="font-size: 1.2em; font-weight: bold; color: #2d3748;" id="currentUmluft">-- %</div>
-                    </div>
-                    
-                    <div class="form-group">
-                        <label>💨 Abluft-Ventilator</label>
-                        <div style="font-size: 1.2em; font-weight: bold; color: #2d3748;" id="currentAbluft">-- %</div>
-                    </div>
-                    
-                    <div class="form-group">
-                        <label>🕒 Letzte Änderung</label>
-                        <div style="font-size: 0.9em; color: #718096;" id="lastChange">--</div>
-                    </div>
-                    
-                    <div class="form-group">
-                        <label>📋 Aktive Regel</label>
-                        <div style="font-size: 0.9em; color: #718096;" id="activeRule">Manuelle Steuerung</div>
-                    </div>
-                </div>
-                
-                <div style="margin-top: 20px; padding: 15px; background: #f7fafc; border-radius: 10px;">
-                    <h4 style="margin: 0 0 10px 0; color: #4a5568;">⚡ Schnellaktionen</h4>
-                    <div style="display: flex; gap: 10px; flex-wrap: wrap;">
-                        <button class="btn btn-success" onclick="refreshCurrentSettings()">
-                            🔄 Aktualisieren
-                        </button>
-                        <button class="btn btn-warning" onclick="testFans()">
-                            🧪 Ventilatoren testen
-                        </button>
-                        <button class="btn btn-danger" onclick="emergencyStop()">
-                            🚨 Notaus
-                        </button>
-                    </div>
-                </div>
-            </div>
         </div>
         
         <div class="main-layout">
-            <!-- Linke Seite: Sensoren (2/3) -->
+            <!-- Linke Seite: Sensoren -->
             <div class="sensors-section">
                 <!-- Alle Sensordaten in einer Tabelle -->
                 <div class="card">
@@ -867,11 +888,14 @@
                                 <td class="sensor-value" id="light">--</td>
                                 <td>lux</td>
                             </tr>
-                            <!-- Bodenfeuchtigkeitssensoren -->
+                            <!-- Bodenfeuchtigkeitssensoren (OHNE Durchschnitt) -->
                             <tr>
-                                <td rowspan="3">Bodenfeuchtigkeit</td>
+                                <td rowspan="2">Bodenfeuchtigkeit</td>
                                 <td>Sensor 1</td>
-                                <td class="sensor-value" id="moisture1">--</td>
+                                <td>
+                                    <span class="sensor-value" id="moisture1">--</span>
+                                    <span class="moisture-status" id="moisture1Status"></span>
+                                </td>
                                 <td>%</td>
                             </tr>
                             <tr>
@@ -879,32 +903,20 @@
                                 <td class="sensor-value" id="moisture2">--</td>
                                 <td>%</td>
                             </tr>
-                            <tr>
-                                <td>Durchschnitt</td>
-                                <td>
-                                    <span class="sensor-value" id="moistureAvg">--</span>
-                                    <span class="moisture-status" id="moistureStatus"></span>
-                                </td>
-                                <td>%</td>
-                            </tr>
-                            <!-- Ventilatoren -->
-                            <tr>
-                                <td rowspan="2">Ventilatoren</td>
-                                <td>Umluft-Ventilator</td>
-                                <td class="sensor-value" id="fanUmluft">--</td>
-                                <td>%</td>
-                            </tr>
-                            <tr>
-                                <td>Abluft-Ventilator</td>
-                                <td class="sensor-value" id="fanAbluft">--</td>
-                                <td>%</td>
-                            </tr>
                         </tbody>
                     </table>
                 </div>
+                
+                <!-- Console Output -->
+                <div class="card">
+                    <div class="card-title">🖥️ System Console</div>
+                    <div class="console" id="consoleOutput">
+                        <div style="color: #48bb78;">Verbinde mit ESP32 Console...</div>
+                    </div>
+                </div>
             </div>
             
-            <!-- Rechte Seite: System Status (1/3) -->
+            <!-- Rechte Seite: System Status -->
             <div class="system-section">
                 <div class="card">
                     <div class="card-title">
@@ -1020,6 +1032,7 @@
         let historicalData = [];
         let selectedWeekdays = [];
         let currentSchedule = [];
+        let eventSource = null; // Für SSE Console
         
         // Chart.js Konfiguration
         Chart.defaults.color = '#4a5568';
@@ -1190,7 +1203,7 @@
             }
         });
         
-        // Neues Chart für Bodenfeuchtigkeit
+        // Bodenfeuchtigkeit Chart (OHNE Durchschnitt)
         const moistureChart = new Chart(document.getElementById('moistureChart'), {
             type: 'line',
             data: {
@@ -1207,13 +1220,6 @@
                     borderColor: '#38a169',
                     backgroundColor: 'rgba(56, 161, 105, 0.1)',
                     tension: 0.4
-                }, {
-                    label: 'Durchschnitt (%)',
-                    data: [],
-                    borderColor: '#22543d',
-                    backgroundColor: 'rgba(34, 84, 61, 0.1)',
-                    tension: 0.4,
-                    borderWidth: 3
                 }]
             },
             options: {
@@ -1234,36 +1240,14 @@
                         min: 0,
                         max: 100
                     }
-                },
-                plugins: {
-                    legend: {
-                        display: true,
-                        position: 'top',
-                    },
-                    tooltip: {
-                        callbacks: {
-                            afterLabel: function(context) {
-                                if (context.dataset.label === 'Durchschnitt (%)') {
-                                    const value = context.parsed.y;
-                                    if (value >= 40 && value <= 60) return 'Status: Optimal';
-                                    else if (value >= 20 && value <= 80) return 'Status: Akzeptabel';
-                                    else return 'Status: Kritisch';
-                                }
-                                return '';
-                            }
-                        }
-                    }
                 }
             }
         });
         
         // VPD Berechnung
         function calculateVPD(temp, humidity) {
-            // Sättigungsdampfdruck bei gegebener Temperatur (kPa)
             const svp = 0.6108 * Math.exp((17.27 * temp) / (temp + 237.3));
-            // Aktueller Dampfdruck
             const avp = svp * (humidity / 100);
-            // VPD
             const vpd = svp - avp;
             return vpd;
         }
@@ -1288,7 +1272,55 @@
             }
         }
         
-        // Intervall-Slider initialisieren
+        // Console SSE Connection
+        function connectConsole() {
+            if (eventSource) {
+                eventSource.close();
+            }
+            
+            eventSource = new EventSource('/api/console');
+            const consoleOutput = document.getElementById('consoleOutput');
+            
+            eventSource.onmessage = function(event) {
+                try {
+                    const data = JSON.parse(event.data);
+                    const line = document.createElement('div');
+                    line.className = 'console-line';
+                    line.textContent = data.message;
+                    consoleOutput.appendChild(line);
+                    
+                    // Auto-scroll
+                    consoleOutput.scrollTop = consoleOutput.scrollHeight;
+                    
+                    // Limit lines
+                    while (consoleOutput.children.length > 100) {
+                        consoleOutput.removeChild(consoleOutput.firstChild);
+                    }
+                } catch (e) {
+                    console.error('Console SSE error:', e);
+                }
+            };
+            
+            eventSource.onerror = function(error) {
+                console.error('Console SSE connection error:', error);
+                const line = document.createElement('div');
+                line.style.color = '#f56565';
+                line.textContent = '❌ Console Verbindung unterbrochen. Verbinde neu...';
+                consoleOutput.appendChild(line);
+                
+                // Reconnect nach 5 Sekunden
+                setTimeout(connectConsole, 5000);
+            };
+            
+            eventSource.onopen = function() {
+                const line = document.createElement('div');
+                line.style.color = '#48bb78';
+                line.textContent = '✅ Console verbunden';
+                consoleOutput.appendChild(line);
+            };
+        }
+        
+        // Intervall-Slider
         const slider = document.getElementById('intervalSlider');
         const valueDisplay = document.getElementById('intervalValue');
         
@@ -1305,18 +1337,13 @@
         
         // Tab-Switching
         function switchTab(tabName) {
-            // Alle Tabs deaktivieren
             document.querySelectorAll('.tab').forEach(tab => tab.classList.remove('active'));
             document.querySelectorAll('.tab-content').forEach(content => content.classList.remove('active'));
             
-            // Aktiven Tab aktivieren
             document.querySelector(`[onclick="switchTab('${tabName}')"]`).classList.add('active');
             document.getElementById(`${tabName}-tab`).classList.add('active');
             
-            // Bei Current-Tab Daten laden
-            if (tabName === 'current') {
-                refreshCurrentSettings();
-            } else if (tabName === 'schedule') {
+            if (tabName === 'schedule') {
                 loadSchedule();
             }
         }
@@ -1410,7 +1437,6 @@
             const umluft = document.getElementById('scheduleUmluft').value;
             const abluft = document.getElementById('scheduleAbluft').value;
             
-            // Validierung
             if (!name) {
                 alert('❌ Bitte geben Sie einen Namen für die Regel ein!');
                 return;
@@ -1421,7 +1447,6 @@
                 return;
             }
             
-            // Parameter zusammenstellen
             const params = new URLSearchParams({
                 name: name,
                 start_hour: startHour,
@@ -1593,9 +1618,11 @@
             fetch('/api/fans')
                 .then(response => response.json())
                 .then(data => {
-                    document.getElementById('currentUmluft').textContent = `${data.umluft || 0}%`;
-                    document.getElementById('currentAbluft').textContent = `${data.abluft || 0}%`;
-                    document.getElementById('lastChange').textContent = new Date().toLocaleString('de-DE');
+                    // Update Display über den Reglern
+                    document.getElementById('currentUmluftDisplay').textContent = `${data.umluft || 0}%`;
+                    document.getElementById('currentAbluftDisplay').textContent = `${data.abluft || 0}%`;
+                    document.getElementById('lastChangeDisplay').textContent = data.last_updated || new Date().toLocaleString('de-DE');
+                    document.getElementById('activeRuleDisplay').textContent = data.active_rule || 'Manuelle Steuerung';
                     
                     // Slider aktualisieren
                     document.getElementById('umluftSlider').value = data.umluft || 0;
@@ -1610,15 +1637,12 @@
         
         function testFans() {
             if (confirm('Ventilatoren für 10 Sekunden auf 100% setzen?')) {
-                // Aktuelle Werte speichern
                 const currentUmluft = document.getElementById('umluftSlider').value;
                 const currentAbluft = document.getElementById('abluftSlider').value;
                 
-                // Auf 100% setzen
                 fetch('/api/fans/set?umluft=100&abluft=100')
                     .then(() => {
                         setTimeout(() => {
-                            // Nach 10 Sekunden zurücksetzen
                             fetch(`/api/fans/set?umluft=${currentUmluft}&abluft=${currentAbluft}`)
                                 .then(() => {
                                     alert('✅ Ventilator-Test abgeschlossen');
@@ -1644,6 +1668,11 @@
                         alert('❌ NOTAUS fehlgeschlagen!');
                     });
             }
+        }
+        
+        function downloadCSV() {
+            // CSV Download
+            window.location.href = '/download/csv';
         }
         
         function updateConnectionStatus(online) {
@@ -1688,7 +1717,6 @@
                 .then(data => {
                     updateConnectionStatus(true);
                     updateSensorDisplay(data);
-                    console.log('Sensor data:', data);
                 })
                 .catch(error => {
                     console.error('Fehler beim Laden der Sensordaten:', error);
@@ -1713,7 +1741,6 @@
                 .then(response => response.json())
                 .then(data => {
                     updateSystemStatus(data);
-                    console.log('System status:', data);
                 })
                 .catch(error => {
                     console.error('Fehler beim Laden der Systemdaten:', error);
@@ -1728,8 +1755,6 @@
         }
         
         function updateSensorDisplay(data) {
-            console.log('Updating sensor display with:', data);
-            
             // BME680 Daten
             document.getElementById('temperature').textContent = 
                 data.bme680_temp ? data.bme680_temp.toFixed(1) : '--';
@@ -1759,17 +1784,16 @@
             document.getElementById('light').textContent = 
                 data.bh1750_lux ? data.bh1750_lux.toFixed(1) : '--';
             
-            // Bodenfeuchtigkeit
+            // Bodenfeuchtigkeit (OHNE Durchschnitt)
             document.getElementById('moisture1').textContent = 
                 data.moisture_sensor1 !== undefined ? data.moisture_sensor1.toFixed(1) : '--';
             document.getElementById('moisture2').textContent = 
                 data.moisture_sensor2 !== undefined ? data.moisture_sensor2.toFixed(1) : '--';
-            document.getElementById('moistureAvg').textContent = 
-                data.moisture_average !== undefined ? data.moisture_average.toFixed(1) : '--';
             
-            if (data.moisture_average !== undefined) {
-                const moistureStatus = getMoistureStatus(data.moisture_average);
-                const statusEl = document.getElementById('moistureStatus');
+            // Status nur für Sensor 1
+            if (data.moisture_status) {
+                const moistureStatus = getMoistureStatus(data.moisture_sensor1);
+                const statusEl = document.getElementById('moisture1Status');
                 statusEl.textContent = moistureStatus.text;
                 statusEl.className = 'moisture-status ' + moistureStatus.class;
             }
@@ -1782,12 +1806,7 @@
         }
         
         function updateSystemStatus(data) {
-            console.log('Updating system status with:', data);
-            
-            if (!data || !data.memory) {
-                console.log('No memory data available');
-                return;
-            }
+            if (!data || !data.memory) return;
             
             // Memory Informationen
             const totalMB = Math.round(data.memory.total / 1024 / 1024 * 10) / 10;
@@ -1836,7 +1855,7 @@
                 document.getElementById('csvLines').textContent = data.data.csv_lines;
             }
             
-            // Memory warning basierend auf freiem Speicher in KB
+            // Memory warning
             if (freeKB < 50) {
                 document.getElementById('systemStatus').className = 'status-indicator status-error';
             } else if (freeKB < 100) {
@@ -1849,11 +1868,9 @@
         function updateCharts() {
             if (!historicalData || historicalData.length === 0) return;
             
-            // Nur die letzten 30 Einträge anzeigen
             const recentData = historicalData.slice(-30);
             
-            // Labels (Zeit)
-            const labels = recentData.map(d => d.date.split('-')[1]); // Nur Zeit
+            const labels = recentData.map(d => d.date.split('-')[1]);
             
             // Klima + VPD Chart
             climateVpdChart.data.labels = labels;
@@ -1873,159 +1890,65 @@
             lightChart.data.datasets[0].data = recentData.map(d => d.bh1750_lux);
             lightChart.update();
             
-            // Bodenfeuchtigkeit Chart
+            // Bodenfeuchtigkeit Chart (OHNE Durchschnitt)
             moistureChart.data.labels = labels;
             moistureChart.data.datasets[0].data = recentData.map(d => d.moisture1 || 0);
             moistureChart.data.datasets[1].data = recentData.map(d => d.moisture2 || 0);
-            moistureChart.data.datasets[2].data = recentData.map(d => d.moisture_avg || 0);
             moistureChart.update();
         }
         
         function startAutoUpdate() {
-            // Alten Timer stoppen
             if (updateTimer) {
                 clearInterval(updateTimer);
             }
             
-            // Ersten Aufruf sofort
             updateSensorData();
             
-            // Neuen Timer starten
             updateTimer = setInterval(updateSensorData, currentInterval * 1000);
             console.log('Auto-update gestartet mit Intervall:', currentInterval, 'Sekunden');
         }
         
-        // OTA Update Funktionen
-        function checkForUpdates() {
-            fetch('/api/ota/check')
-                .then(response => response.json())
-                .then(data => {
-                    if (data.error) {
-                        alert(`Fehler beim Update-Check: ${data.error}\n\nStelle sicher, dass die GitHub-URL in der main.py konfiguriert ist.`);
-                        return;
-                    }
-                    
-                    if (data.update_available) {
-                        const msg = `Update verfügbar!\n\nAktuelle Version: ${data.current_version}\nNeue Version: ${data.latest_version}\n\nJetzt installieren?`;
-                        if (confirm(msg)) {
-                            performUpdate();
-                        }
-                    } else {
-                        alert(`Keine Updates verfügbar.\n\nAktuelle Version: ${data.current_version}`);
-                    }
-                })
-                .catch(error => {
-                    console.error('Update-Check fehlgeschlagen:', error);
-                    alert('Update-Check fehlgeschlagen!');
-                });
-        }
-        
-        function performUpdate() {
-            if (confirm('Das Update startet den ESP32 neu. Fortfahren?')) {
-                fetch('/api/ota/update')
-                    .then(() => {
-                        alert('Update gestartet! Der ESP32 wird neu gestartet...');
-                        updateConnectionStatus(false);
-                    })
-                    .catch(error => {
-                        console.error('Update fehlgeschlagen:', error);
-                        alert('Update fehlgeschlagen!');
-                    });
-            }
-        }
-        
-        function showSystemInfo() {
-            fetch('/api/system/info')
-                .then(response => response.json())
-                .then(data => {
-                    let info = `=== ESP32 System Information ===\n\n`;
-                    info += `Firmware Version: ${data.version}\n`;
-                    info += `IP-Adresse: ${data.network_info.ip}\n`;
-                    info += `MAC-Adresse: ${data.network_info.mac}\n`;
-                    info += `Freier Flash: ${Math.round(data.free_flash / 1024)} KB\n`;
-                    info += `WebREPL aktiv: ${data.webrepl_active ? 'Ja' : 'Nein'}\n`;
-                    
-                    if (data.webrepl_active) {
-                        info += `\nWebREPL Zugriff:\n`;
-                        info += `1. Öffne http://micropython.org/webrepl/\n`;
-                        info += `2. Verbinde zu: ws://${data.network_info.ip}:8266/\n`;
-                        info += `3. Passwort: (leer lassen)\n`;
-                    }
-                    
-                    info += `\nThonny Netzwerk-Zugriff:\n`;
-                    info += `1. Extras > Optionen > Interpreter\n`;
-                    info += `2. MicroPython (ESP32) > WebREPL\n`;
-                    info += `3. ws://${data.network_info.ip}:8266/\n`;
-                    
-                    if (data.has_backup) {
-                        info += `\n✅ Backup vorhanden (Rollback möglich)`;
-                    }
-                    if (data.has_failed_update) {
-                        info += `\n⚠️ Fehlgeschlagenes Update gefunden`;
-                    }
-                    
-                    info += `\n\nDateien auf dem ESP32:\n`;
-                    info += data.files.filter(f => f.endsWith('.py') || f.endsWith('.json')).join(', ');
-                    
-                    alert(info);
-                })
-                .catch(error => {
-                    console.error('System-Info fehlgeschlagen:', error);
-                    alert('Konnte System-Informationen nicht abrufen!');
-                });
-        }
-        
         // Initialisierung
         document.addEventListener('DOMContentLoaded', function() {
-            // Standard-Wochentage auswählen (Mo-Fr)
             selectWorkdays();
-            
-            // Aktuelle Einstellungen laden
             refreshCurrentSettings();
-            
-            // Zeitplan laden
             loadSchedule();
-            
-            // Auto-update starten
             startAutoUpdate();
+            connectConsole(); // Console SSE verbinden
             
-            // Auto-refresh alle 30 Sekunden für aktuelle Einstellungen
             setInterval(() => {
-                if (document.querySelector('#current-tab').classList.contains('active')) {
+                if (document.querySelector('#manual-tab').classList.contains('active')) {
                     refreshCurrentSettings();
                 }
             }, 30000);
         });
         
-        // Beim Verlassen der Seite Timer stoppen
+        // Beim Verlassen der Seite
         window.addEventListener('beforeunload', function() {
             if (updateTimer) {
                 clearInterval(updateTimer);
             }
+            if (eventSource) {
+                eventSource.close();
+            }
         });
         
-        // Visibility API - Updates pausieren wenn Tab nicht aktiv
+        // Visibility API
         document.addEventListener('visibilitychange', function() {
             if (document.hidden) {
                 if (updateTimer) {
                     clearInterval(updateTimer);
                     console.log('Tab hidden, pausing updates');
                 }
+                if (eventSource) {
+                    eventSource.close();
+                }
             } else {
                 console.log('Tab visible, resuming updates');
                 startAutoUpdate();
+                connectConsole();
             }
         });
-        
-        // Debug-Funktionen
-        window.debugFetch = function() {
-            console.log('=== DEBUG: Manual fetch ===');
-            updateSensorData();
-        };
-        
-        window.debugData = function() {
-            console.log('Current historical data:', historicalData);
-        };
     </script>
 </body>
 </html>
