@@ -1,0 +1,1 @@
+[{"start_minute": 0, "end_hour": 23, "enabled": false, "end_minute": 59, "name": "Lueftung", "abluft_speed": 100.0, "start_hour": 8, "umluft_speed": 50.0, "weekdays": [0, 1, 2, 3, 4, 6, 5], "created": "2025/08/15-17:47:30"}]
