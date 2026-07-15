@@ -1,0 +1,33 @@
+{
+  "files": [
+    "main.py",
+    "boot.py",
+    "settings.py",
+    "index.html",
+    "drivers/bme680.py",
+    "drivers/bme280.py",
+    "drivers/ccs811.py",
+    "drivers/bh1750.py",
+    "core/device.py",
+    "core/sensor.py",
+    "core/actuator.py",
+    "core/i2c_mux.py",
+    "core/adc_channel.py",
+    "core/registry.py",
+    "core/auth.py",
+    "core/csv_log.py",
+    "core/vpd.py",
+    "core/timeutil.py",
+    "core/wifi.py",
+    "sensors/bme_sensor.py",
+    "sensors/ccs811_sensor.py",
+    "sensors/bh1750_sensor.py",
+    "sensors/moisture_sensor.py",
+    "actuators/pwm_actuator.py",
+    "actuators/control.py",
+    "actuators/schedule.py",
+    "web/httputil.py",
+    "web/server.py",
+    "ota/ota.py"
+  ]
+}

@@ -1,0 +1,4 @@
+secrets.py
+device_secrets.py
+settings_local.py
+device_backup_*/

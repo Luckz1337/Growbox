@@ -1,0 +1,5 @@
+{
+  "typeCheckingMode": "basic",
+  "stubPath": "PC-Tooling/typings",
+  "reportMissingModuleSource": "none"
+}
