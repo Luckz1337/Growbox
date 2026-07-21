@@ -1,10 +1,3 @@
-# This file is executed on every boot (including wake-boot from deepsleep)
-#import esp
-#esp.osdebug(None)
-#import webrepl
-#webrepl.start()
-# boot.py
-#
 from ota import OTAUpdater
 from wifi_config import SSID, PASSWORD
 
