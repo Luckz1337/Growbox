@@ -5,7 +5,7 @@
 #webrepl.start()
 # boot.py
 #
-from ota import OTAUpdater
+from ota.ota import OTAUpdater
 from wifi_config import SSID, PASSWORD
 
 def check_for_updates():
